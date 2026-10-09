@@ -1,0 +1,10 @@
+# Build output and third-party source. Rebuild with build.sh and the scripts in tic80/.
+build/
+tic80/src/
+tic80/obj/
+tic80/lib/
+tic80/gen/
+# Local experiments
+research/
+*.raw
+.DS_Store

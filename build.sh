@@ -1,0 +1,26 @@
+#!/bin/bash
+# Builds every tool into build/. Needs: Xcode command line tools (clang), ldid (brew install ldid),
+# an iOS SDK (git clone https://github.com/theos/sdks ; set IOS_SDK, default ~/sdks/iPhoneOS9.3.sdk;
+# its usr/lib/libSystem.tbd must not re-export the missing liblaunch), and Android NDK r27.
+set -e
+cd "$(dirname "$0")"
+SDK=${IOS_SDK:-$HOME/sdks/iPhoneOS9.3.sdk}
+NDK=$(ls -d "$HOME"/Library/Android/sdk/ndk/27.* | head -1)
+ACC=$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang
+mkdir -p build
+
+# iOS 7 armv7, jailbroken. Entitlements are signed in with ldid. Private symbols resolve at run time.
+ios() {
+    clang -arch armv7 -O2 -miphoneos-version-min=7.0 -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup \
+          -framework CoreFoundation -o "build/$2_ios" "$1" 2>&1 | grep -v '^ld: warning' || true
+    ldid -Scommon/hid.entitlements.plist "build/$2_ios"
+}
+# Android API 16+ : static, because NDK r27 cannot target API 16 dynamically. -fno-emulated-tls and the
+# aligned TLS variable in plat_android.h keep bionic's static startup from rejecting the TLS segment.
+android() { "$ACC" -O2 -static -fno-pie -fno-emulated-tls -o "build/$2_android" "$1"; }
+
+ios fbdemo.c fbdemo
+for t in paint condemo fbshell calib; do ios common/$t.c $t; done
+android android/fbdemo.c fbdemo
+for t in paint condemo fbshell; do android common/$t.c $t; done
+ls -l build | awk 'NR>1 {print $5, $9}'
