@@ -14,6 +14,7 @@ static void plat__term_handler(int sig);
 static FB plat__fb;
 static int plat__w, plat__h;
 static int plat__live;
+static int plat__parent;                     // started by the launcher: it owns the flag and the overlay
 static double plat__flag_t;
 
 PLAT_FN int plat_init(PlatInfo *pi) {
@@ -24,10 +25,11 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     // /tmp/fbmode. While that file is fresh, the tweak makes SpringBoard ignore touches and skip auto-lock.
     // Without the tweak the program uses layer 0 and the launch script freezes SpringBoard (limited to ~110 s).
     // PLAT_FROZEN=1 forces the old mode. PLAT_LAYER overrides the layer.
+    plat__parent = getenv("FB_PARENT") != NULL;
     plat__live = access("/Library/MobileSubstrate/DynamicLibraries/FBMode.dylib", F_OK) == 0 && !getenv("PLAT_FROZEN");
     const char *lay = getenv("PLAT_LAYER");
     plat__fb.layer = lay ? atoi(lay) : (plat__live ? 1 : 0);
-    if (plat__live) {
+    if (plat__live && !plat__parent) {
         FILE *ff = fopen("/tmp/fbmode", "w");
         if (ff) fclose(ff);
         chmod("/tmp/fbmode", 0644);
@@ -79,13 +81,18 @@ PLAT_FN void plat_flip(void) {
     plat__flag_refresh();
 }
 PLAT_FN void plat_close(void) {
+    if (plat__parent) return;                           // the launcher keeps the flag and the picture until it draws again
     if (plat__live) unlink("/tmp/fbmode");
     fb_unset(&plat__fb);
 }
 
+// For a launcher that waits on a child program: keep the flag fresh without drawing.
+PLAT_FN void plat_keepalive(void) { plat__flag_refresh(); }
+
 // Called when the program is killed or crashes: remove the flag and take our surface off the overlay layer,
 // so no stale picture stays on screen. Best effort (it calls into IOKit from a signal handler).
 PLAT_FN void plat_emergency_cleanup(void) {
+    if (plat__parent) return;
     if (plat__live) unlink("/tmp/fbmode");
     if (plat__fb.disp) fb_unset(&plat__fb);
 }

@@ -116,6 +116,9 @@ static void fb_unset(FB *f) {
         f->SwapSetLayer(f->disp, f->layer, NULL, r, r, 0);
         f->SwapEnd(f->disp);
     }
+    // The swap is committed at the next vsync. A program that exits right away can lose it and leave its last
+    // picture on screen (the launcher did), so give the swap time to land.
+    usleep(150000);
 }
 
 #endif

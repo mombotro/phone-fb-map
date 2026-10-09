@@ -13,6 +13,7 @@ Read the shared design first. Then read the section for your device.
 | On-screen keyboard and shell | yes | yes | not tested |
 | TIC-80 player | yes | not tested | not tested |
 | Music player | yes | not built | not built |
+| App picker and home-screen icon | yes | not tested | not tested |
 | Paint demo | yes | yes | yes |
 
 ## Shared design
@@ -190,6 +191,25 @@ Output goes to an `AudioQueue`. Audio output works from a root tool with no audi
 In live mode the player runs with no time limit.
 
 The Mac app `Send to Phone` copies a dropped file to the phone and asks the player to play it. Build the app with `music/build_droplet.sh`.
+
+### App picker
+
+The picker is `launcher/launcher.c`. It shows a grid of touch tiles: Paint, Shell, TIC-80, Music, Calibrate, and Exit.
+The TIC-80 tile opens a list of the carts in `/var/root/carts`.
+
+The launcher keeps the display and the SpringBoard tweak flag for its whole run. It starts a tool with `fork` and `execv`, and it sets the variable `FB_PARENT` for the tool.
+A tool with `FB_PARENT` set does not remove the flag and does not clear the overlay when it ends. The launcher then draws the picker again.
+After a tool ends, the launcher ignores touches for half a second, so the tap on the tool's EXIT button cannot hit a tile.
+
+Run it with `sh /var/root/run_launcher_ios.sh`. It needs the SpringBoard tweak.
+
+To start the picker from the phone, run `launcher/install_icon_ios.sh` on the Mac.
+The script builds `FBTools.app`, copies it to `/Applications`, and resprings.
+
+- The app executable runs as root (setuid, mode 4755). It starts the launcher in the background and exits at once. iOS expects an app to finish launching in about 20 seconds.
+- The new `scp` cannot copy a directory to this phone, because the phone has no sftp-server. The script streams the bundle with `tar` over `ssh`.
+- `uicache` must run as the mobile user: `su mobile -c uicache`. As root it fails with "cannot open cache file".
+- A program that exits right after it clears the overlay can lose the clear. `fb_unset` waits 150 ms so the swap lands.
 
 ## Nexus 4
 

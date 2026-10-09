@@ -18,6 +18,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `calib` | Measures the touch axes. It writes the result to a file. | iPhone 4 |
 | `tic80` | A TIC-80 player for `.tic` and `.lua` carts, with sound. | iPhone 4 |
 | `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. | iPhone 4 |
+| `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |
 
@@ -48,6 +49,9 @@ Use the script. Do not run a program by hand while the system UI is stopped.
 Install the SpringBoard tweak once on the iPhone. Without it, an iPhone program can own the screen for only about 110 seconds.
 With it, a program can run as long as it needs. We played a 4-minute song and a 5-minute game.
 
+To start the picker from the phone, run `launcher/install_icon_ios.sh` once. It adds the FB Tools icon to the home screen.
+Tap the icon, then tap a tile.
+
 For music, copy a folder from your Mac with `python3 music/sync_music.py FOLDER`. Or build the Mac app with `music/build_droplet.sh`, then drop music files on it.
 
 The device map has the exact commands for each device.
@@ -61,6 +65,7 @@ The device map has the exact commands for each device.
 | `common/` | The platform layer, drawing, console, keyboard, terminal, and the programs above. |
 | `tic80/` | The TIC-80 player, its sound output, and the scripts that build it. |
 | `music/` | The music player, the sync script, and the Mac drop app. |
+| `launcher/` | The app picker and the installer for its home-screen icon. |
 | `tweak/` | The SpringBoard tweak for long-running screen programs. |
 | `docs/DEVICE-MAP.md` | How each device works. |
 | `build.sh` | Builds every program. |

@@ -74,7 +74,7 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     plat__page = plat__pages > 1 ? 1 : 0;
     plat__base = mmap(NULL, plat__f.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, plat__fd, 0);
     if (plat__base == MAP_FAILED) { perror("mmap"); return -1; }
-    plat__wake_panel();
+    if (!getenv("FB_PARENT")) plat__wake_panel();      // the launcher already woke the panel
     pi->name = "Android / fbdev (/dev/graphics/fb0)";
     pi->w = plat__v.xres; pi->h = plat__v.yres;
     pi->rs = plat__v.red.offset; pi->gs = plat__v.green.offset; pi->bs = plat__v.blue.offset;
@@ -191,3 +191,6 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
     }
     return cnt;
 }
+
+// For a launcher that waits on a child program. Nothing to refresh on Android.
+PLAT_FN void plat_keepalive(void) {}
