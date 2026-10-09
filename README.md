@@ -52,6 +52,8 @@ With it, a program can run as long as it needs. We played a 4-minute song and a 
 To start the picker from the phone, run `launcher/install_icon_ios.sh` once. It adds the FB Tools icon to the home screen.
 Tap the icon, then tap a tile.
 
+Kiosk mode makes the phone boot straight into the picker with no way out to the home screen. See `launcher/kiosk.sh` and the device map.
+
 For music, copy a folder from your Mac with `python3 music/sync_music.py FOLDER`. Or build the Mac app with `music/build_droplet.sh`, then drop music files on it.
 
 The device map has the exact commands for each device.

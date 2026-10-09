@@ -49,6 +49,23 @@ int main(void) {
 
     float dxx = tr[0] - tl[0], dxy = tr[1] - tl[1];        // raw movement for screen +x
     float dyx = br[0] - tr[0], dyy = br[1] - tr[1];        // raw movement for screen +y
+    // The two moves must each be clearly along one axis. A diagonal or short move means the corners were not tapped
+    // accurately, and a wrong result would make the screen unusable. So refuse it and leave the old calibration alone.
+    float ax = fabsf(dxx) > fabsf(dxy) ? fabsf(dxx) : fabsf(dxy), bx = fabsf(dxx) > fabsf(dxy) ? fabsf(dxy) : fabsf(dxx);
+    float ay = fabsf(dyx) > fabsf(dyy) ? fabsf(dyx) : fabsf(dyy), by = fabsf(dyx) > fabsf(dyy) ? fabsf(dyy) : fabsf(dyx);
+    if (ax < 0.4f || ay < 0.4f || ax < 2.5f * bx || ay < 2.5f * by) {
+        fprintf(stderr, "calibration REFUSED: taps were not accurate (x move %.2f vs %.2f, y move %.2f vs %.2f). Nothing was written.\n", ax, bx, ay, by);
+        int stride; uint32_t *px = plat_begin(&stride);
+        Surf s2 = { px, stride, pi.w, pi.h, pi.rs, pi.gs, pi.bs, pi.alpha };
+        draw_rect(&s2, 0, 0, pi.w, pi.h, 0x301010);
+        draw_text(&s2, 40, pi.h / 2 - 40, 2, "CALIBRATION FAILED", 0xFFFFFF);
+        draw_text(&s2, 40, pi.h / 2 + 10, 2, "Tap the dots more", 0xFFAAAA);
+        draw_text(&s2, 40, pi.h / 2 + 50, 2, "accurately. Old setting", 0xFFAAAA);
+        draw_text(&s2, 40, pi.h / 2 + 90, 2, "was kept.", 0xFFAAAA);
+        plat_flip(); usleep(3500000);
+        plat_close();
+        return 1;
+    }
     int swap = fabsf(dxx) < fabsf(dxy);
     int flipx = swap ? dxy < 0 : dxx < 0;
     int flipy = swap ? dyx < 0 : dyy < 0;

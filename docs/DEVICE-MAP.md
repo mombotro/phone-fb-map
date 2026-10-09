@@ -14,6 +14,7 @@ Read the shared design first. Then read the section for your device.
 | TIC-80 player | yes | not tested | not tested |
 | Music player | yes | not built | not built |
 | App picker and home-screen icon | yes | not tested | not tested |
+| Kiosk mode (boots into the picker) | yes | not built | not built |
 | Paint demo | yes | yes | yes |
 
 ## Shared design
@@ -210,6 +211,36 @@ The script builds `FBTools.app`, copies it to `/Applications`, and resprings.
 - The new `scp` cannot copy a directory to this phone, because the phone has no sftp-server. The script streams the bundle with `tar` over `ssh`.
 - `uicache` must run as the mobile user: `su mobile -c uicache`. As root it fails with "cannot open cache file".
 - A program that exits right after it clears the overlay can lose the clear. `fb_unset` waits 150 ms so the swap lands.
+
+### Kiosk mode
+
+Kiosk mode makes the iPhone start in the app picker and stay there. The picker has no Exit tile, and the phone's own home screen is out of reach.
+Control it from the Mac with `launcher/kiosk.sh`: `on`, `off`, `status`, `start-now`, `install-boot`, `remove-boot`, and `log`.
+
+The switch is the file `/var/mobile/fbkiosk_on`. SpringBoard runs as the mobile user and can read it, so the tweak knows from its first moment.
+`kiosk.sh off` removes the file, stops every tool, and clears the screen. It also creates `/var/root/kiosk_off`, which stops the boot script.
+
+At boot:
+
+1. The tweak loads into SpringBoard. It finds the switch and starts a background thread. A timer on the main run loop is too late, because that loop is busy for the first 30 seconds.
+2. About 2 seconds later the thread runs the FB Tools stub, which runs as root and starts `launcher/run_kiosk_ios.sh`.
+3. That script runs the picker in a loop and restarts it if it ends. Ten quick failures in a row turn kiosk off.
+4. The LaunchDaemon `com.local.fbkiosk` is a backup. launchd loads it about a minute after SpringBoard. The file `/var/root/kiosk.pid` stops a second copy from starting.
+
+While the switch is on, the tweak does these things:
+
+- It refuses every way into the lock screen: `_setUILocked:`, `_lockUI`, `lockUIFromSource:withOptions:`, and `_activateLockScreenAnimated:...`. It unlocks a device that started locked.
+- It keeps the screen on.
+- It blocks the home button at its source: `_menuButtonDown:`, `_menuButtonUp:`, `handleMenuDoubleTap`, `clickedMenuButton`, and `_toggleSwitcher`. The app switcher cannot open.
+- It makes the power button turn the screen off and on without locking. The tweak sets the backlight with `setBacklightFactor:source:` and writes `/tmp/fbscreen_off`.
+  While that file exists, the programs ignore touches and skip drawing. Music keeps playing.
+- Volume buttons still work.
+
+Rules and recovery:
+
+- A kiosk with no way out can lock you out. The SSH tunnel does not need the screen. Run `launcher/kiosk.sh off` to get the normal phone back.
+- In kiosk mode the picker hides the Calibrate tile. A bad calibration once swapped the touch axes and made the screen unusable. `calib` now refuses a result when the corner taps are not clearly along one axis each.
+- Hold the home and power buttons for 10 seconds to restart the phone. This is a hardware reset.
 
 ## Nexus 4
 

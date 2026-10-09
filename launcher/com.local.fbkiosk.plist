@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>com.local.fbkiosk</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>/var/root/run_kiosk_ios.sh</string>
+	</array>
+	<key>RunAtLoad</key><true/>
+	<key>UserName</key><string>root</string>
+	<key>StandardOutPath</key><string>/var/root/kiosk.boot.log</string>
+	<key>StandardErrorPath</key><string>/var/root/kiosk.boot.log</string>
+</dict>
+</plist>

@@ -16,6 +16,8 @@ static int plat__w, plat__h;
 static int plat__live;
 static int plat__parent;                     // started by the launcher: it owns the flag and the overlay
 static double plat__flag_t;
+static int plat__screen_off;                 // /tmp/fbscreen_off exists: the power button turned the screen off
+static double plat__off_check;
 
 PLAT_FN int plat_init(PlatInfo *pi) {
     if (fb_init(&plat__fb, 640, 960)) return -1;
@@ -56,6 +58,7 @@ static void plat__flag_refresh(void) {
     struct timeval tv; gettimeofday(&tv, NULL);
     double t = tv.tv_sec + tv.tv_usec / 1e6;
     if (t - plat__flag_t >= 1.0) { utimes("/tmp/fbmode", NULL); plat__flag_t = t; }
+    if (t - plat__off_check >= 0.2) { plat__screen_off = access("/tmp/fbscreen_off", F_OK) == 0; plat__off_check = t; }
 }
 
 // Flip statistics: a failed or slow flip may show on screen as flicker. Printed to stderr, at most one line per 5 s.
@@ -63,6 +66,7 @@ static long plat__flips, plat__fails, plat__slow;
 static double plat__max_ms, plat__t0, plat__last_report;
 
 PLAT_FN void plat_flip(void) {
+    if (plat__screen_off) { usleep(60000); plat__flag_refresh(); return; }       // screen is off: do not draw
     struct timeval a, b; gettimeofday(&a, NULL);
     int rc = fb_flip(&plat__fb);
     gettimeofday(&b, NULL);
@@ -156,6 +160,7 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
     plat__flag_refresh();
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, false);   // let the framework deliver pending frames
     int n = 0;
+    if (plat__screen_off) return 0;                         // screen is off: ignore touches (no taps in a pocket)
     for (int i = 0; i < 16 && n < max; i++) {
         if (!plat__mt[i].active) continue;
         float x = plat__mt[i].x, y = plat__mt[i].y;

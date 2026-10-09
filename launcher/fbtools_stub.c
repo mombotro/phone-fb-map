@@ -14,8 +14,10 @@ int main(void) {
         if (fork() != 0) _exit(0);                              // detach from the app process
         int fd = open("/dev/null", O_RDWR);
         if (fd >= 0) { dup2(fd, 0); dup2(fd, 1); dup2(fd, 2); }
-        // Start the launcher unless it is already running (a second tap does nothing).
+        // Kiosk switch on: run the kiosk loop (it guards against a second copy). Otherwise start the picker unless
+        // it is already running (a second tap does nothing).
         execl("/bin/sh", "sh", "-c",
+              "if [ -f /var/mobile/fbkiosk_on ]; then exec sh /var/root/run_kiosk_ios.sh 0; fi; "
               "killall -0 fblauncher >/dev/null 2>&1 || exec sh /var/root/run_launcher_ios.sh", (char *)NULL);
         _exit(127);
     }

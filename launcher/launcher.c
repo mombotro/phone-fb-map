@@ -4,6 +4,9 @@
 // The launcher keeps the display (and, on the iPhone, SpringBoard's silent mode) for its whole run. A tool that
 // the launcher starts has FB_PARENT set, so it leaves the flag and the picture to the launcher when it ends.
 // usage: fblauncher [seconds]     (default 86400)
+//
+// Kiosk mode (FB_KIOSK set): the Exit tile is not shown, so there is no way out to the phone's home screen.
+// Use launcher/kiosk.sh from the Mac to turn kiosk mode off.
 #include "../common/plat.h"
 #include "../common/draw.h"
 #include <dirent.h>
@@ -98,14 +101,17 @@ static void scan_carts(void) {
 
 int main(int argc, char **argv) {
     double seconds = argc > 1 ? atof(argv[1]) : 86400;
+    const int kiosk = getenv("FB_KIOSK") != NULL;
     PlatInfo pi;
     if (plat_init(&pi) || plat_touch_init(&pi)) return 1;
+    if (kiosk) { FILE *kf = fopen("/tmp/fbmode", "w"); if (kf) { fputc('K', kf); fclose(kf); } }   // a non-empty flag = kiosk: the tweak also blocks the buttons
     const int W = pi.w, H = pi.h;
 
-    // only show tools whose program is installed (the Exit tile and the cart picker always show)
+    // only show tools whose program is installed (the cart picker always shows, the Exit tile only outside kiosk mode)
     int shown[16], nshown = 0;
     for (int i = 0; i < N_ALL && nshown < 16; i++) {
-        if (TOOLS[i].kind == K_QUIT) { shown[nshown++] = i; continue; }
+        if (TOOLS[i].kind == K_QUIT) { if (!kiosk) shown[nshown++] = i; continue; }
+        if (kiosk && strstr(TOOLS[i].cmd, "/calib")) continue;               // a bad calibration would lock the user out
         char buf[512]; snprintf(buf, sizeof buf, "%s", TOOLS[i].cmd);
         char *sp = strchr(buf, ' '); if (sp) *sp = 0;
         if (access(buf, X_OK) == 0) shown[nshown++] = i;
