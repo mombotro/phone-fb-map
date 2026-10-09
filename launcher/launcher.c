@@ -36,6 +36,7 @@ static const Tool TOOLS[] = {
     { "Shell",     "terminal + keyboard", ">_",  0x3AA56E, BASE "/fbshell 3600 2",        K_RUN },
     { "TIC-80",    "pick a game cart",    "80",  0xA53A4E, BASE "/tic80",                 K_CARTS },
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
+    { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Calibrate", "fix touch axes",      "+",   0x6E3AA5, BASE "/calib",                 K_RUN },
 #else
     { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600",            K_RUN },

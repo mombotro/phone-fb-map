@@ -19,6 +19,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `tic80` | A TIC-80 player for `.tic` and `.lua` carts, with sound. | iPhone 4 |
 | `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. | iPhone 4 |
 | `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
+| `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |
 
@@ -56,6 +57,9 @@ Kiosk mode makes the phone boot straight into the picker with no way out to the 
 
 For music, copy a folder from your Mac with `python3 music/sync_music.py FOLDER`. Or build the Mac app with `music/build_droplet.sh`, then drop music files on it.
 
+To copy app files between the Mac and the phone, run `python3 tools/phonefiles.py status`, then `pull`, `push`, or `sync`.
+The files go to `~/PhoneFiles/<app>` on the Mac. If both sides changed a file, the tool keeps both copies and does not overwrite anything.
+
 The device map has the exact commands for each device.
 
 ## Layout
@@ -64,9 +68,10 @@ The device map has the exact commands for each device.
 |---|---|
 | `fb.h`, `fbdemo.c` | The iOS framebuffer library and a test program. |
 | `android/fbdemo.c` | The Android framebuffer test program. |
-| `common/` | The platform layer, drawing, console, keyboard, terminal, and the programs above. |
+| `common/` | The platform layer, drawing, console, keyboard, terminal, the touch UI kit `ui.h`, and the programs above. |
 | `tic80/` | The TIC-80 player, its sound output, and the scripts that build it. |
 | `music/` | The music player, the sync script, and the Mac drop app. |
+| `tools/` | `phonefiles.py`, the file sync tool. |
 | `launcher/` | The app picker and the installer for its home-screen icon. |
 | `tweak/` | The SpringBoard tweak for long-running screen programs. |
 | `docs/DEVICE-MAP.md` | How each device works. |

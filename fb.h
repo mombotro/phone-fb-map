@@ -108,6 +108,18 @@ static int fb_flip(FB *f) {
 }
 
 
+// Put the last picture we showed back on the layer. The display forgets its layers when it is powered down and up again
+// (the power button), and then the iPhone's boot logo shows through until a program draws again.
+static void fb_reassert(FB *f) {
+    int last = (f->back + 2) % 3;                           // fb_flip rotates after showing, so this was shown last
+    FB_Rect r = {0, 0, (float)f->w, (float)f->h};
+    uint32_t token = 0;
+    if (f->SwapBegin(f->disp, &token) == 0) {
+        f->SwapSetLayer(f->disp, f->layer, f->surf[last], r, r, 0);
+        f->SwapEnd(f->disp);
+    }
+}
+
 // Take our surface off the layer, so no stale picture stays on screen after the program ends.
 static void fb_unset(FB *f) {
     FB_Rect r = {0, 0, (float)f->w, (float)f->h};

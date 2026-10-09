@@ -18,6 +18,7 @@ static int plat__parent;                     // started by the launcher: it owns
 static double plat__flag_t;
 static int plat__screen_off;                 // /tmp/fbscreen_off exists: the power button turned the screen off
 static double plat__off_check;
+static double plat__reassert_until, plat__last_reassert;   // after the screen comes back on, keep re-showing our picture
 
 PLAT_FN int plat_init(PlatInfo *pi) {
     if (fb_init(&plat__fb, 640, 960)) return -1;
@@ -58,7 +59,12 @@ static void plat__flag_refresh(void) {
     struct timeval tv; gettimeofday(&tv, NULL);
     double t = tv.tv_sec + tv.tv_usec / 1e6;
     if (t - plat__flag_t >= 1.0) { utimes("/tmp/fbmode", NULL); plat__flag_t = t; }
-    if (t - plat__off_check >= 0.2) { plat__screen_off = access("/tmp/fbscreen_off", F_OK) == 0; plat__off_check = t; }
+    if (t - plat__off_check >= 0.2) {
+        int off = access("/tmp/fbscreen_off", F_OK) == 0;
+        if (plat__screen_off && !off) plat__reassert_until = t + 3.0;           // the screen just came back on
+        plat__screen_off = off; plat__off_check = t;
+    }
+    if (t < plat__reassert_until && t - plat__last_reassert >= 0.1) { fb_reassert(&plat__fb); plat__last_reassert = t; }
 }
 
 // Flip statistics: a failed or slow flip may show on screen as flicker. Printed to stderr, at most one line per 5 s.
