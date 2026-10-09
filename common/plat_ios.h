@@ -4,14 +4,36 @@
 // Freeze SpringBoard (not backboardd) while drawing, and kill -9 it afterwards for a clean respring
 // so touches queued while it was stopped cannot hit icons.
 #include "../fb.h"
+#include <signal.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <unistd.h>
 
+static void plat__term_handler(int sig);
 static FB plat__fb;
 static int plat__w, plat__h;
+static int plat__live;
+static double plat__flag_t;
 
 PLAT_FN int plat_init(PlatInfo *pi) {
     if (fb_init(&plat__fb, 640, 960)) return -1;
     plat__fb.wait_mode = 3;                 // 60 Hz timer; SwapWait blocks with our guessed args
+    // Live SpringBoard mode: when the FBMode tweak is installed, SpringBoard keeps running (nothing for the system to
+    // kill after two minutes). The program draws on overlay layer 1, which SpringBoard cannot cover, and creates
+    // /tmp/fbmode. While that file is fresh, the tweak makes SpringBoard ignore touches and skip auto-lock.
+    // Without the tweak the program uses layer 0 and the launch script freezes SpringBoard (limited to ~110 s).
+    // PLAT_FROZEN=1 forces the old mode. PLAT_LAYER overrides the layer.
+    plat__live = access("/Library/MobileSubstrate/DynamicLibraries/FBMode.dylib", F_OK) == 0 && !getenv("PLAT_FROZEN");
+    const char *lay = getenv("PLAT_LAYER");
+    plat__fb.layer = lay ? atoi(lay) : (plat__live ? 1 : 0);
+    if (plat__live) {
+        FILE *ff = fopen("/tmp/fbmode", "w");
+        if (ff) fclose(ff);
+        chmod("/tmp/fbmode", 0644);
+    }
+    signal(SIGTERM, plat__term_handler); signal(SIGINT, plat__term_handler); signal(SIGHUP, plat__term_handler);
+    fprintf(stderr, "display: %s mode, layer %d\n", plat__live ? "live SpringBoard" : "frozen SpringBoard", plat__fb.layer);
     pi->name = "iPhone 4 / iOS 7 (IOMobileFramebuffer)";
     pi->w = plat__w = 640; pi->h = plat__h = 960;
     pi->rs = 16; pi->gs = 8; pi->bs = 0;    // 0xAARRGGBB
@@ -25,8 +47,53 @@ PLAT_FN uint32_t *plat_begin(int *stride_px) {
     return plat__fb.px;
 }
 
-PLAT_FN void plat_flip(void) { fb_flip(&plat__fb); }
-PLAT_FN void plat_close(void) {}
+// Keep the flag fresh: the tweak ignores a flag older than 5 s. Programs that redraw only on change (music player,
+// shell) may not flip for a long time, so the touch poll refreshes it too.
+static void plat__flag_refresh(void) {
+    if (!plat__live) return;
+    struct timeval tv; gettimeofday(&tv, NULL);
+    double t = tv.tv_sec + tv.tv_usec / 1e6;
+    if (t - plat__flag_t >= 1.0) { utimes("/tmp/fbmode", NULL); plat__flag_t = t; }
+}
+
+// Flip statistics: a failed or slow flip may show on screen as flicker. Printed to stderr, at most one line per 5 s.
+static long plat__flips, plat__fails, plat__slow;
+static double plat__max_ms, plat__t0, plat__last_report;
+
+PLAT_FN void plat_flip(void) {
+    struct timeval a, b; gettimeofday(&a, NULL);
+    int rc = fb_flip(&plat__fb);
+    gettimeofday(&b, NULL);
+    double ms = (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_usec - a.tv_usec) / 1000.0;
+    if (plat__t0 == 0) plat__t0 = plat__last_report = a.tv_sec + a.tv_usec / 1e6;
+    plat__flips++;
+    if (rc != 0) plat__fails++;
+    if (ms > 40.0) plat__slow++;
+    if (ms > plat__max_ms) plat__max_ms = ms;
+    double t = b.tv_sec + b.tv_usec / 1e6;
+    if (t - plat__last_report >= 5.0) {
+        if (plat__fails || plat__slow)
+            fprintf(stderr, "[%6.1f] flips: %ld, failed %ld, slow(>40ms) %ld, slowest %.0f ms\n", t - plat__t0, plat__flips, plat__fails, plat__slow, plat__max_ms);
+        plat__last_report = t; plat__fails = plat__slow = 0; plat__max_ms = 0;
+    }
+    plat__flag_refresh();
+}
+PLAT_FN void plat_close(void) {
+    if (plat__live) unlink("/tmp/fbmode");
+    fb_unset(&plat__fb);
+}
+
+// Called when the program is killed or crashes: remove the flag and take our surface off the overlay layer,
+// so no stale picture stays on screen. Best effort (it calls into IOKit from a signal handler).
+PLAT_FN void plat_emergency_cleanup(void) {
+    if (plat__live) unlink("/tmp/fbmode");
+    if (plat__fb.disp) fb_unset(&plat__fb);
+}
+
+static void plat__term_handler(int sig) {
+    plat_emergency_cleanup();
+    _exit(128 + sig);
+}
 
 // ---- touch: MultitouchSupport raw contact frames ----
 // Layout matches the macOS MTFinger struct (23 words, double at offset 4): verified from dumped frames.
@@ -79,6 +146,7 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
 }
 
 PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
+    plat__flag_refresh();
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, false);   // let the framework deliver pending frames
     int n = 0;
     for (int i = 0; i < 16 && n < max; i++) {

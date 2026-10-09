@@ -11,7 +11,8 @@ Read the shared design first. Then read the section for your device.
 | Text console | yes | yes | not tested |
 | Touch | yes | yes | yes |
 | On-screen keyboard and shell | yes | yes | not tested |
-| TIC-80 player (no sound yet) | yes | not tested | not tested |
+| TIC-80 player | yes | not tested | not tested |
+| Music player | yes | not built | not built |
 | Paint demo | yes | yes | yes |
 
 ## Shared design
@@ -96,13 +97,41 @@ The layer default surface gives garbled pixels, so do not use it. Draw into your
 
 Do not call `IOMobileFramebufferSwapWait`. It blocks with these arguments. Use a 60 Hz timer.
 
-### Stop the system UI
+### Keep SpringBoard quiet
 
-Freeze SpringBoard with `killall -STOP SpringBoard`. Do not freeze `backboardd`, because it must stay alive.
-When the program ends, run `killall -9 SpringBoard`. Then launchd starts a fresh SpringBoard.
-This clean respring also discards touches that queued while SpringBoard was frozen.
-Wait 20 seconds after a respring before you freeze SpringBoard again.
-The script `common/run_shell_ios.sh` and the script `tic80/run_tic80_ios.sh` do these steps. They also set a watchdog.
+A program that owns the screen must stop SpringBoard from drawing, and must not let the system kill it.
+Freezing SpringBoard does not work for long. iOS replaces a frozen SpringBoard after about two minutes.
+Pulses of SIGCONT, a frozen `backboardd`, and an unloaded SpringBoard all failed. See the notes at the end of this section.
+
+**Live mode** is the method that works. SpringBoard keeps running, and the program draws on top of it.
+
+1. Build the tweak: `clang -arch armv7 -dynamiclib -x objective-c -isysroot SDK -Wl,-undefined,dynamic_lookup -o FBMode.dylib tweak/FBMode.m`, then `ldid -S FBMode.dylib`.
+2. Copy `FBMode.dylib` and `tweak/FBMode.plist` to `/Library/MobileSubstrate/DynamicLibraries` on the phone.
+3. Respring with `killall -9 SpringBoard`.
+
+The tweak loads only into SpringBoard. It does nothing unless the file `/tmp/fbmode` exists and is under 5 seconds old.
+While that flag is fresh, the tweak does these things:
+
+- It drops touch events, so taps cannot reach the hidden home screen.
+- It refuses the swipe gestures for Control Center and Notification Center.
+- It hides every SpringBoard window and keeps new windows hidden. Banners and panels cannot show.
+- It prevents idle sleep, so the screen stays on.
+
+Each program creates the flag, refreshes it about once a second, and deletes it at exit. A program that dies leaves a stale flag,
+so SpringBoard returns to normal within 5 seconds. The program draws on display layer 1, which sits above layer 0. Layer 2 does not exist.
+Live mode has no time limit. We played a 4-minute song and the player stayed on screen and awake.
+
+The launch scripts `common/run_shell_ios.sh`, `tic80/run_tic80_ios.sh`, and `music/run_music_ios.sh` use live mode when the tweak file is present.
+Without the tweak they fall back to frozen mode, which holds a run to 110 seconds and waits 160 seconds after a respring.
+
+Rules that came from failures:
+
+- Keep the SBSettings tweak disabled. It crashes SpringBoard when SpringBoard wakes after a freeze.
+- Do not freeze `backboardd`. Audio and the display need it.
+- Do not unload SpringBoard. The phone rebooted when a program drew with no SpringBoard.
+- A program killed with SIGKILL leaves its picture on layer 1. Run `fbreset` to clear it.
+- Scope each watchdog timer to the process ID of its own run. An unscoped `killall` timer outlived its run and killed the next run.
+- With two iOS devices on USB, `iproxy` tunnels to the first one. Start it with `iproxy -u UDID 2222:22`.
 
 ### Touch
 
@@ -124,6 +153,7 @@ Bit 0 flips x. Bit 1 flips y. Bit 2 swaps x and y.
 ### Sign and run
 
 Sign each binary with `ldid -Scommon/hid.entitlements.plist`. Copy it to `/var/root`.
+To clear a leftover picture on layer 1, run `/var/root/fbreset`.
 Run the shell with `sh /var/root/run_shell_ios.sh 300 2`. Type `exit` to end it.
 
 ### Shell
@@ -143,7 +173,23 @@ The player is in `tic80/`. It runs TIC-80 with Lua only. It does not include the
 The player loads `.tic` carts and `.lua` projects. It reads the `-- <TILES>` and similar sections of a `.lua` file with the core project parser.
 The game runs at 60 ticks per second and about 57 frames per second.
 
-Sound does not work yet. The core makes audio samples, but the player does not send them to the speaker.
+The player has sound. It pushes the audio from `tic80_sound` into a ring buffer, and an `AudioQueue` plays it (`tic80/audio.h`).
+The `music.lua` demo cart confirms it. The Tetris demo keeps its sound off until you choose "sound on" in its menu.
+
+### Music player
+
+The player is in `music/`. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg files from `/var/root/music`.
+
+1. Run `music/fetch_libs.sh`. It gets two single-file decoders.
+2. Run `music/build.sh`. It writes `build/musicplayer_ios`.
+3. Copy music to the phone with `python3 music/sync_music.py FOLDER`. The script sends only new or changed files.
+4. Run `sh /var/root/run_music_ios.sh`.
+
+Apple's `ExtAudioFile` decodes MP3, M4A, WAV, and AIFF. The library `dr_flac` decodes FLAC. The library `stb_vorbis` decodes Ogg.
+Output goes to an `AudioQueue`. Audio output works from a root tool with no audio session.
+In live mode the player runs with no time limit.
+
+The Mac app `Send to Phone` copies a dropped file to the phone and asks the player to play it. Build the app with `music/build_droplet.sh`.
 
 ## Nexus 4
 

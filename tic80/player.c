@@ -1,9 +1,10 @@
 // player.c - TIC-80 on the raw framebuffer (iOS 7 / Android). Core + Lua only, no studio.
 // usage: tic80 <cart.tic | cart.lua> [seconds]     (default 3600)
 // Game is scaled by an integer factor at the top; D-pad, A/B/X/Y and EXIT are drawn below.
-// Touching the game area acts as the mouse. Sound is not wired up yet (the core runs silently).
+// Touching the game area acts as the mouse. Sound plays through an AudioQueue on iOS (see audio.h).
 #include "../common/plat.h"
 #include "../common/draw.h"
+#include "audio.h"
 #include "tic80.h"
 #include "cart.h"                 // internal: tic_cartridge, tic_cart_save
 #include "studio/project.h"       // internal: tic_project_load (reads -- <TILES> etc. sections from .lua)
@@ -21,6 +22,8 @@ int dlclose(void *h) { (void)h; return 0; }
 #endif
 
 static int g_quit;
+static long g_snd_frames, g_snd_loud_ticks;     // audio statistics, printed at exit
+static int g_snd_peak, g_snd_first_count = -1;
 
 static double now(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec + tv.tv_usec / 1e6; }
 static u64 counter_cb(void *d) { (void)d; return (u64)(now() * 1000000.0); }
@@ -83,6 +86,7 @@ int main(int argc, char **argv) {
     tic80 *tic = tic80_create(TIC80_SAMPLERATE, TIC80_PIXEL_COLOR_ARGB8888);
     tic->callback.trace = trace_cb; tic->callback.error = error_cb; tic->callback.exit = exit_cb;
     tic80_load(tic, data, (s32)size);
+    if (snd_init(TIC80_SAMPLERATE)) fprintf(stderr, "no sound output on this platform\n");
 
     int prev_down[16] = {0};
     double t0 = now(), last = t0, acc = 0;
@@ -127,7 +131,18 @@ int main(int argc, char **argv) {
         double tn = now(); acc += tn - last; last = tn;
         if (acc > 0.1) acc = 0.1;
         int nt = 0;
-        while (acc >= 1.0 / 60 && nt < 4) { tic80_tick(tic, input, counter_cb, freq_cb); acc -= 1.0 / 60; nt++; ticks++; }
+        while (acc >= 1.0 / 60 && nt < 4) {
+            tic80_tick(tic, input, counter_cb, freq_cb);
+            tic80_sound(tic);                                   // synthesize this tick's audio, then queue it
+            snd_push(tic->samples.buffer, tic->samples.count / TIC80_SAMPLE_CHANNELS);
+            if (g_snd_first_count < 0) g_snd_first_count = tic->samples.count;
+            int peak = 0;
+            for (int k = 0; k < tic->samples.count; k++) { int v = tic->samples.buffer[k]; if (v < 0) v = -v; if (v > peak) peak = v; }
+            if (peak > g_snd_peak) g_snd_peak = peak;
+            if (peak > 0) g_snd_loud_ticks++;
+            g_snd_frames += tic->samples.count / TIC80_SAMPLE_CHANNELS;
+            acc -= 1.0 / 60; nt++; ticks++;
+        }
         if (nt == 0 && frames > 0) { usleep(1000); continue; }
 
         int stride; uint32_t *px = plat_begin(&stride);
@@ -171,7 +186,10 @@ int main(int argc, char **argv) {
         frames++;
     }
     double dt = now() - t0;
+    snd_close();
     plat_close();
     fprintf(stderr, "%ld frames, %ld ticks in %.1fs (%.1f fps display, %.1f tick/s)\n", frames, ticks, dt, frames / dt, ticks / dt);
+    fprintf(stderr, "audio: %ld frames made, %d samples per tick, %ld ticks with sound, loudest sample %d of 32767\n",
+            g_snd_frames, g_snd_first_count, g_snd_loud_ticks, g_snd_peak);
     return 0;
 }

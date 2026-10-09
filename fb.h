@@ -19,6 +19,7 @@ typedef struct {
     FB_IOMFB disp;
     FB_Surface surf[3];
     int back;                       // index of surface being drawn to
+    int layer;                      // display layer that gets our surface (0 = the layer SpringBoard also uses)
     size_t w, h, stride;            // stride in bytes
     uint32_t *px;                   // back buffer pixels (valid between fb_begin and fb_flip)
 
@@ -72,6 +73,7 @@ static int fb_init(FB *f, int w, int h) {
         if (!f->surf[i]) { fprintf(stderr, "IOSurfaceCreate %d failed\n", i); return -1; }
     }
     f->back = 0;
+    f->layer = 0;
     f->px = NULL;
     return 0;
 }
@@ -89,7 +91,7 @@ static int fb_flip(FB *f) {
     uint32_t token = 0;
     FB_Rect r = {0, 0, (float)f->w, (float)f->h};
     int rc = f->SwapBegin(f->disp, &token);
-    if (rc == 0) rc = f->SwapSetLayer(f->disp, 0, f->surf[f->back], r, r, 0);
+    if (rc == 0) rc = f->SwapSetLayer(f->disp, f->layer, f->surf[f->back], r, r, 0);
     if (rc == 0) rc = f->SwapEnd(f->disp);
     if (rc == 0 && f->SwapWait && f->wait_mode == 1) rc = f->SwapWait(f->disp, token, 1000);
     if (rc == 0 && f->SwapWait && f->wait_mode == 2 && f->last_token) rc = f->SwapWait(f->disp, f->last_token, 1000);
@@ -103,6 +105,17 @@ static int fb_flip(FB *f) {
     f->last_token = token;
     f->back = (f->back + 1) % 3;
     return rc;
+}
+
+
+// Take our surface off the layer, so no stale picture stays on screen after the program ends.
+static void fb_unset(FB *f) {
+    FB_Rect r = {0, 0, (float)f->w, (float)f->h};
+    uint32_t token = 0;
+    if (f->SwapBegin(f->disp, &token) == 0) {
+        f->SwapSetLayer(f->disp, f->layer, NULL, r, r, 0);
+        f->SwapEnd(f->disp);
+    }
 }
 
 #endif

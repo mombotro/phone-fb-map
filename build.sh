@@ -11,8 +11,11 @@ mkdir -p build
 
 # iOS 7 armv7, jailbroken. Entitlements are signed in with ldid. Private symbols resolve at run time.
 ios() {
-    clang -arch armv7 -O2 -miphoneos-version-min=7.0 -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup \
-          -framework CoreFoundation -o "build/$2_ios" "$1" 2>&1 | grep -v '^ld: warning' || true
+    local out rc
+    out=$(clang -arch armv7 -O2 -miphoneos-version-min=7.0 -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup \
+          -framework CoreFoundation -o "build/$2_ios" "$1" 2>&1); rc=$?
+    printf '%s\n' "$out" | grep -v '^ld: warning' || true
+    [ $rc -eq 0 ] || { echo "BUILD FAILED: $1 (ios)" >&2; rm -f "build/$2_ios"; exit 1; }
     ldid -Scommon/hid.entitlements.plist "build/$2_ios"
 }
 # Android API 16+ : static, because NDK r27 cannot target API 16 dynamically. -fno-emulated-tls and the
@@ -20,7 +23,7 @@ ios() {
 android() { "$ACC" -O2 -static -fno-pie -fno-emulated-tls -o "build/$2_android" "$1"; }
 
 ios fbdemo.c fbdemo
-for t in paint condemo fbshell calib; do ios common/$t.c $t; done
+for t in paint condemo fbshell calib fbreset; do ios common/$t.c $t; done
 android android/fbdemo.c fbdemo
 for t in paint condemo fbshell; do android common/$t.c $t; done
 ls -l build | awk 'NR>1 {print $5, $9}'
