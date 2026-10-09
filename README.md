@@ -16,7 +16,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `condemo` | A scrolling text console. | iPhone 4, Nexus 4 |
 | `fbshell` | A shell with an on-screen keyboard. | iPhone 4, Nexus 4 |
 | `calib` | Measures the touch axes. It writes the result to a file. | iPhone 4 |
-| `tic80` | A TIC-80 player for `.tic` and `.lua` carts. | iPhone 4 |
+| `tic80` | A TIC-80 player for `.tic` and `.lua` carts. Sound does not work yet. | iPhone 4 |
 
 ## Build
 

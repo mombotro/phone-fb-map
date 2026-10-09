@@ -11,7 +11,7 @@ Read the shared design first. Then read the section for your device.
 | Text console | yes | yes | not tested |
 | Touch | yes | yes | yes |
 | On-screen keyboard and shell | yes | yes | not tested |
-| TIC-80 player | yes | not tested | not tested |
+| TIC-80 player (no sound yet) | yes | not tested | not tested |
 | Paint demo | yes | yes | yes |
 
 ## Shared design
@@ -141,7 +141,9 @@ The player is in `tic80/`. It runs TIC-80 with Lua only. It does not include the
 5. Run `sh /var/root/run_tic80_ios.sh /var/root/carts/tetris.lua 90`.
 
 The player loads `.tic` carts and `.lua` projects. It reads the `-- <TILES>` and similar sections of a `.lua` file with the core project parser.
-The game runs at 60 ticks per second and about 57 frames per second. The player has no sound.
+The game runs at 60 ticks per second and about 57 frames per second.
+
+Sound does not work yet. The core makes audio samples, but the player does not send them to the speaker.
 
 ## Nexus 4
 
