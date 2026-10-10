@@ -20,6 +20,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. | iPhone 4 |
 | `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
 | `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |
+| `timer` | A stopwatch, a countdown timer, and an alarm clock. The timer and the alarm ring while the program runs. The alarm wakes a blank screen. | iPhone 4, Nexus 4, LG Intuition |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |
 
@@ -51,7 +52,7 @@ Install the SpringBoard tweak once on the iPhone. Without it, an iPhone program 
 With it, a program can run as long as it needs. We played a 4-minute song and a 5-minute game.
 
 To start the picker from the phone, run `launcher/install_icon_ios.sh` once. It adds the FB Tools icon to the home screen.
-Tap the icon, then tap a tile.
+Tap the icon, then tap a tile. The Shut down tile turns the phone off after you confirm.
 
 Kiosk mode makes the phone boot straight into the picker with no way out to the home screen. See `launcher/kiosk.sh` and the device map.
 

@@ -472,6 +472,10 @@ static void unlock_and_wake(void) {
 
 static void tick(CFRunLoopTimerRef t, void *info) {
     install_hooks();                                    // retry until UIKit classes exist
+    if (access("/tmp/fbwake", F_OK) == 0) {            // a program (the alarm) asks for the screen to come on
+        unlink("/tmp/fbwake");
+        if (g_screen_off || sb_screen_off()) screen_set(0);
+    }
     int w = wanted();
     if (w != g_was_wanted) {
         logf_("kiosk %s", w ? "wanted (no lock screen, screen stays on)" : "no longer wanted");

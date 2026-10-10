@@ -27,7 +27,7 @@
 #define DEVICE_NAME "Android"
 #endif
 
-enum { K_RUN, K_CARTS, K_QUIT };
+enum { K_RUN, K_CARTS, K_QUIT, K_SHUTDOWN };
 typedef struct { const char *label, *sub, *glyph; uint32_t color; const char *cmd; int kind; } Tool;
 
 static const Tool TOOLS[] = {
@@ -37,11 +37,15 @@ static const Tool TOOLS[] = {
     { "TIC-80",    "pick a game cart",    "80",  0xA53A4E, BASE "/tic80",                 K_CARTS },
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
+    { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
     { "Calibrate", "fix touch axes",      "+",   0x6E3AA5, BASE "/calib",                 K_RUN },
 #else
     { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600",            K_RUN },
     { "Shell",     "terminal + keyboard", ">_",  0x3AA56E, BASE "/fbshell 3600 2",        K_RUN },
     { "Console",   "text demo",           "Aa",  0xA58A3A, BASE "/condemo 20 2",          K_RUN },
+#endif
+#ifdef __APPLE__
+    { "Shut down", "turn the phone off",  "o|",  0x6A2A2A, "/sbin/halt",                  K_SHUTDOWN },
 #endif
     { "Exit",      "back to the phone",   "x",   0x883333, NULL,                          K_QUIT },
 };
@@ -124,7 +128,7 @@ int main(int argc, char **argv) {
     int tile_h = (H - HDR - GAP * (rows + 1)) / (rows ? rows : 1);
     if (tile_h > 210) tile_h = 210;
 
-    enum { S_MAIN, S_CARTS } state = S_MAIN;
+    enum { S_MAIN, S_CARTS, S_SHUT } state = S_MAIN;
     int scroll = 0, dirty = 3, pressed = -1;
     double t0 = now();
 
@@ -156,10 +160,24 @@ int main(int argc, char **argv) {
                 if (tx < x || tx >= x + tile_w || ty < y || ty >= y + tile_h) continue;
                 const Tool *t = &TOOLS[shown[k]];
                 if (t->kind == K_QUIT) quit = 1;
+                else if (t->kind == K_SHUTDOWN) state = S_SHUT;
                 else if (t->kind == K_CARTS) { scan_carts(); scroll = 0; state = S_CARTS; }
                 else { run_tool(t->cmd); settle(); prev = 0; }
                 dirty = 3; break;
             }
+        } else if (tap && state == S_SHUT) {
+            int bx = GAP, bw = W - 2 * GAP;
+            if (tx >= bx && tx < bx + bw && ty >= 380 && ty < 560) {                 // YES
+                dirty = 0; state = S_MAIN;
+                int stride; uint32_t *px = plat_begin(&stride);
+                Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+                draw_rect(&s, 0, 0, W, H, 0x000000);
+                draw_text(&s, GAP + 6, H / 2 - 16, 3, "Shutting down...", 0xFFFFFF);
+                plat_flip();
+                sync(); system("/sbin/halt");
+                sleep(60);
+            } else if (tx >= bx && tx < bx + bw && ty >= 600 && ty < 780) state = S_MAIN;     // CANCEL
+            dirty = 3;
         } else if (tap && state == S_CARTS) {
             if (ty < LIST_Y0 && tx < 200) { state = S_MAIN; }                       // BACK button in the header
             else if (ty >= LIST_Y0) {
@@ -204,6 +222,14 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
+            } else if (state == S_SHUT) {
+                draw_text(&s, GAP + 6, 200, 4, "SHUT DOWN?", 0xFFFFFF);
+                draw_text(&s, GAP + 6, 280, 2, "The phone turns off. Push the power", 0x99AABB);
+                draw_text(&s, GAP + 6, 312, 2, "button to start it again.", 0x99AABB);
+                draw_rect(&s, GAP, 380, W - 2 * GAP, 180, 0x9A2A2A);
+                draw_text(&s, GAP + 30, 440, 5, "YES, OFF", 0xFFFFFF);
+                draw_rect(&s, GAP, 600, W - 2 * GAP, 180, 0x2A3850);
+                draw_text(&s, GAP + 30, 660, 5, "CANCEL", 0xFFFFFF);
             } else {
                 if (g_ncarts == 0) draw_text(&s, 20, LIST_Y0 + 20, 2, "No carts in " BASE "/carts", 0x888888);
                 for (int r = 0; r < g_ncarts; r++) {
