@@ -79,6 +79,11 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     pi->w = plat__v.xres; pi->h = plat__v.yres;
     pi->rs = plat__v.red.offset; pi->gs = plat__v.green.offset; pi->bs = plat__v.blue.offset;
     pi->alpha = 0;                          // leave alpha alone; fbdev ignores it
+    // The LG Intuition reports red at bit 24, green 16, blue 8. Its display reads the bytes as R,G,B,A in memory order
+    // (a photo of colour bars showed red lost, green and blue swapped), so use the byte order the display really uses.
+    if (plat__v.red.offset == 24 && plat__v.green.offset == 16 && plat__v.blue.offset == 8 && plat__v.transp.offset == 0) {
+        pi->rs = 0; pi->gs = 8; pi->bs = 16; pi->alpha = 0xFF000000u;
+    }
     plat__last = plat__now();
     return 0;
 }

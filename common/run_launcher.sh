@@ -1,5 +1,5 @@
 # Runs on an Android device as root: stop Android, run the app picker on the framebuffer, always restore Android.
-# usage: run_launcher.sh [seconds]
+# usage: run_launcher.sh [seconds] [program]     (program: a file in /data/local/tmp, default fblauncher)
 # Blank/unblank before start resets the MDP pipes so Android comes back onto a clean display.
 cleanup() {
     echo 4 > /sys/class/graphics/fb0/blank 2>/dev/null
@@ -21,12 +21,13 @@ wait_ready() {
 }
 wait_ready
 T=${1:-3600}
+PROG=${2:-fblauncher}
 # The watchdog kills THIS run only, and is cancelled when the run ends.
 stop
-/data/local/tmp/fblauncher $T > /data/local/tmp/fblauncher.out 2>&1 &
+/data/local/tmp/$PROG $T > /data/local/tmp/$PROG.out 2>&1 &
 PID=$!
 ( sleep $((T + 30)); kill -9 $PID ) >/dev/null 2>&1 &
 WD=$!
 wait $PID
 kill $WD >/dev/null 2>&1
-echo done >> /data/local/tmp/fblauncher.out
+echo done >> /data/local/tmp/$PROG.out

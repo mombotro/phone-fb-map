@@ -46,7 +46,7 @@ Each iPhone program runs from a launch script, and each Android program runs fro
 Use the script. Do not run a program by hand while the system UI is stopped.
 
 - iPhone 4: `common/run_shell_ios.sh`, `tic80/run_tic80_ios.sh`, and `music/run_music_ios.sh`
-- Android: `common/run_paint.sh`, `common/run_shell.sh`, and `common/run_console.sh`
+- Android: `common/run_launcher.sh [seconds] [program]` (the picker by default), `common/run_paint.sh`, `common/run_shell.sh`, and `common/run_console.sh`
 
 Install the SpringBoard tweak once on the iPhone. Without it, an iPhone program can own the screen for only about 110 seconds.
 With it, a program can run as long as it needs. We played a 4-minute song and a 5-minute game.

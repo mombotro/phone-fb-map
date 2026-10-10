@@ -9,6 +9,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#ifdef __ANDROID__
+#include <sys/syscall.h>
+#endif
 
 #ifdef __APPLE__
 #define DEFAULT_DIR "/var/root/data/notes"
@@ -33,6 +36,15 @@ static void mkdirs(const char *p) {
     mkdir(tmp, 0755);
 }
 
+// rename() from the NDK returns ENOSYS on Android 4.1 (checked on an LG Intuition), so call the kernel directly there.
+static int move_file(const char *from, const char *to) {
+#ifdef __ANDROID__
+    return (int)syscall(__NR_rename, from, to);
+#else
+    return rename(from, to);
+#endif
+}
+
 static char *read_file(const char *path, int *len) {
     FILE *f = fopen(path, "rb"); if (!f) return NULL;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -45,7 +57,7 @@ static int write_file(const char *path, const char *data, int len) {
     char tmp[300]; snprintf(tmp, sizeof tmp, "%s.tmp", path);
     FILE *f = fopen(tmp, "wb"); if (!f) return -1;
     fwrite(data, 1, len, f); fclose(f);
-    return rename(tmp, path);
+    return move_file(tmp, path);
 }
 static void note_path(char *out, size_t n, const char *name) { snprintf(out, n, "%s/%s", dir, name); }
 
