@@ -13,7 +13,14 @@
 
 typedef void *FB_IOMFB;
 typedef void *FB_Surface;
-typedef struct { float x, y, w, h; } FB_Rect;   // same register/stack layout as 4 ints on armv7
+#if defined(FB_RECT_DOUBLE)                         // arm64, iOS 12: the display takes each rectangle as 4 doubles (d0-d7)
+typedef double FB_Num;
+#elif defined(FB_RECT_INT)
+typedef int FB_Num;
+#else
+typedef float FB_Num;
+#endif
+typedef struct { FB_Num x, y, w, h; } FB_Rect;   // on armv7 the same register/stack layout as 4 ints
 
 typedef struct {
     FB_IOMFB disp;
@@ -89,7 +96,7 @@ static int fb_flip(FB *f) {
     f->Unlock(f->surf[f->back], 0, NULL);
     f->px = NULL;
     uint32_t token = 0;
-    FB_Rect r = {0, 0, (float)f->w, (float)f->h};
+    FB_Rect r = {0, 0, (FB_Num)f->w, (FB_Num)f->h};
     int rc = f->SwapBegin(f->disp, &token);
     if (rc == 0) rc = f->SwapSetLayer(f->disp, f->layer, f->surf[f->back], r, r, 0);
     if (rc == 0) rc = f->SwapEnd(f->disp);
@@ -112,7 +119,7 @@ static int fb_flip(FB *f) {
 // (the power button), and then the iPhone's boot logo shows through until a program draws again.
 static void fb_reassert(FB *f) {
     int last = (f->back + 2) % 3;                           // fb_flip rotates after showing, so this was shown last
-    FB_Rect r = {0, 0, (float)f->w, (float)f->h};
+    FB_Rect r = {0, 0, (FB_Num)f->w, (FB_Num)f->h};
     uint32_t token = 0;
     if (f->SwapBegin(f->disp, &token) == 0) {
         f->SwapSetLayer(f->disp, f->layer, f->surf[last], r, r, 0);
@@ -122,7 +129,7 @@ static void fb_reassert(FB *f) {
 
 // Take our surface off the layer, so no stale picture stays on screen after the program ends.
 static void fb_unset(FB *f) {
-    FB_Rect r = {0, 0, (float)f->w, (float)f->h};
+    FB_Rect r = {0, 0, (FB_Num)f->w, (FB_Num)f->h};
     uint32_t token = 0;
     if (f->SwapBegin(f->disp, &token) == 0) {
         f->SwapSetLayer(f->disp, f->layer, NULL, r, r, 0);

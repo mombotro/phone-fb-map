@@ -42,6 +42,8 @@ static const Tool TOOLS[] = {
 #else
     { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600",            K_RUN },
     { "Shell",     "terminal + keyboard", ">_",  0x3AA56E, BASE "/fbshell 3600 2",        K_RUN },
+    { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
+    { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
     { "Console",   "text demo",           "Aa",  0xA58A3A, BASE "/condemo 20 2",          K_RUN },
 #endif
 #ifdef __APPLE__

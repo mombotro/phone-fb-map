@@ -3,6 +3,9 @@
 // The HID event system never delivers digitizer events to a second client on iOS 7, but this does.
 // Freeze SpringBoard (not backboardd) while drawing, and kill -9 it afterwards for a clean respring
 // so touches queued while it was stopped cannot hit icons.
+#ifdef __LP64__
+#define FB_RECT_DOUBLE                       // iPhone 5s, iOS 12 (arm64): the display takes rectangles as doubles
+#endif
 #include "../fb.h"
 #include <signal.h>
 #include <stdlib.h>
@@ -21,7 +24,12 @@ static double plat__off_check;
 static double plat__reassert_until, plat__last_reassert;   // after the screen comes back on, keep re-showing our picture
 
 PLAT_FN int plat_init(PlatInfo *pi) {
-    if (fb_init(&plat__fb, 640, 960)) return -1;
+#ifdef __LP64__
+    const int W0 = 640, H0 = 1136;
+#else
+    const int W0 = 640, H0 = 960;
+#endif
+    if (fb_init(&plat__fb, W0, H0)) return -1;
     plat__fb.wait_mode = 3;                 // 60 Hz timer; SwapWait blocks with our guessed args
     // Live SpringBoard mode: when the FBMode tweak is installed, SpringBoard keeps running (nothing for the system to
     // kill after two minutes). The program draws on overlay layer 1, which SpringBoard cannot cover, and creates
@@ -31,7 +39,11 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     plat__parent = getenv("FB_PARENT") != NULL;
     plat__live = access("/Library/MobileSubstrate/DynamicLibraries/FBMode.dylib", F_OK) == 0 && !getenv("PLAT_FROZEN");
     const char *lay = getenv("PLAT_LAYER");
+#ifdef __LP64__
+    plat__fb.layer = lay ? atoi(lay) : 1;       // iOS 12: layer 1 shows on top of the system picture
+#else
     plat__fb.layer = lay ? atoi(lay) : (plat__live ? 1 : 0);
+#endif
     if (plat__live && !plat__parent) {
         FILE *ff = fopen("/tmp/fbmode", "w");
         if (ff) fclose(ff);
@@ -39,8 +51,12 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     }
     signal(SIGTERM, plat__term_handler); signal(SIGINT, plat__term_handler); signal(SIGHUP, plat__term_handler);
     fprintf(stderr, "display: %s mode, layer %d\n", plat__live ? "live SpringBoard" : "frozen SpringBoard", plat__fb.layer);
+#ifdef __LP64__
+    pi->name = "iPhone 5s / iOS 12 (IOMobileFramebuffer)";
+#else
     pi->name = "iPhone 4 / iOS 7 (IOMobileFramebuffer)";
-    pi->w = plat__w = 640; pi->h = plat__h = 960;
+#endif
+    pi->w = plat__w = W0; pi->h = plat__h = H0;
     pi->rs = 16; pi->gs = 8; pi->bs = 0;    // 0xAARRGGBB
     pi->alpha = 0xFF000000u;
     return 0;
@@ -120,7 +136,9 @@ typedef struct {
     float size; int zero1; float angle, major, minor;
     float ax, ay, avx, avy; int zero2, zero3; float zdensity;
 } PlatMTFinger;
-_Static_assert(sizeof(PlatMTFinger) == 92, "MT finger layout");
+#ifndef __LP64__
+_Static_assert(sizeof(PlatMTFinger) == 92, "MT finger layout");    // on arm64 the double is 8-aligned: 96 bytes, same fields
+#endif
 
 static struct { volatile int active; volatile float x, y; } plat__mt[16];
 static int plat__mt_xform;                   // PLAT_MT_XFORM: bit0 flip x, bit1 flip y, bit2 swap x/y
@@ -151,13 +169,25 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
     void *mt = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW);
     if (!mt) { fprintf(stderr, "dlopen MultitouchSupport: %s\n", dlerror()); return -1; }
     void *(*Create)(void) = dlsym(mt, "MTDeviceCreateDefault");
+    void *(*CreateList)(void) = dlsym(mt, "MTDeviceCreateList");
+    CFRunLoopSourceRef (*MkSrc)(void *) = dlsym(mt, "MTDeviceCreateMultitouchRunLoopSource");
     void (*Reg)(void *, void *) = dlsym(mt, "MTRegisterContactFrameCallback");
     int (*Start)(void *, int) = dlsym(mt, "MTDeviceStart");
     if (!Create || !Reg || !Start) { fprintf(stderr, "missing MT symbol\n"); return -1; }
-    void *dev = Create();
+    void *dev = NULL;
+#ifdef __LP64__
+    // iOS 12: use the first device of the list, create its run-loop source before the callback and the start.
+    if (CreateList) {
+        CFArrayRef list = CreateList();
+        if (list && CFArrayGetCount(list) > 0) dev = (void *)CFArrayGetValueAtIndex(list, 0);
+    }
+    if (dev && MkSrc) { CFRunLoopSourceRef rs = MkSrc(dev); if (rs) CFRunLoopAddSource(CFRunLoopGetCurrent(), rs, kCFRunLoopDefaultMode); }
+#endif
+    if (!dev) dev = Create();
     if (!dev) { fprintf(stderr, "MTDeviceCreateDefault failed\n"); return -1; }
     Reg(dev, (void *)plat__mt_cb);
-    Start(dev, 0);
+    int rc = Start(dev, 0);
+    if (rc) fprintf(stderr, "MTDeviceStart rc=0x%x\n", (unsigned)rc);
     fprintf(stderr, "touch: MultitouchSupport device %p, xform %d\n", dev, plat__mt_xform);
     return 0;
 }

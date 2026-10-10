@@ -1,7 +1,7 @@
 # Old-phone framebuffer
 
 This project draws pixels straight to the screen of old phones. It does not use the normal graphics stack.
-It runs on a jailbroken iPhone 4 (iOS 7.1.2), a Nexus 4 (LineageOS 14.1, Android 7.1.2), and an LG Intuition (Android 4.1.2).
+It runs on a jailbroken iPhone 4 (iOS 7.1.2), an iPhone 5s (iOS 12.5.7), a Nexus 4 (LineageOS 14.1, Android 7.1.2), and an LG Intuition (Android 4.1.2).
 
 On top of the display code, the project has multitouch input, a text console, an on-screen keyboard, a shell, a TIC-80 player with sound, and a music player.
 One small platform layer hides the differences between the devices. On the iPhone, a small SpringBoard tweak lets a program own the screen for as long as it needs.
@@ -54,6 +54,10 @@ With it, a program can run as long as it needs. We played a 4-minute song and a 
 To start the picker from the phone, run `launcher/install_icon_ios.sh` once. It adds the FB Tools icon to the home screen.
 Tap the icon, then tap a tile. The Shut down tile turns the phone off after you confirm.
 
+The iPhone 5s (iOS 12, jailbroken with Chimera) runs the same programs as arm64 builds. Run `tools/build_ios12.sh`, then `tools/deploy_ios12.sh`.
+The deploy script signs the programs on the phone, because the Mac `ldid` is too old for iOS 12. Run a program with `run_ios12.sh PROGRAM` on the phone.
+SpringBoard stays frozen while the program runs, so a run lasts at most 100 seconds. There is no tweak or kiosk mode for the 5s yet.
+
 Kiosk mode makes the phone boot straight into the picker with no way out to the home screen. See `launcher/kiosk.sh` and the device map.
 
 For music, copy a folder from your Mac with `python3 music/sync_music.py FOLDER`. Or build the Mac app with `music/build_droplet.sh`, then drop music files on it.
@@ -72,7 +76,7 @@ The device map has the exact commands for each device.
 | `common/` | The platform layer, drawing, console, keyboard, terminal, the touch UI kit `ui.h`, and the programs above. |
 | `tic80/` | The TIC-80 player, its sound output, and the scripts that build it. |
 | `music/` | The music player, the sync script, and the Mac drop app. |
-| `tools/` | `phonefiles.py`, the file sync tool. |
+| `tools/` | `phonefiles.py`, the file sync tool, and the build and deploy scripts for the iPhone 5s. |
 | `launcher/` | The app picker and the installer for its home-screen icon. |
 | `tweak/` | The SpringBoard tweak for long-running screen programs. |
 | `docs/DEVICE-MAP.md` | How each device works. |
