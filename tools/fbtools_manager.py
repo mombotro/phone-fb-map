@@ -29,7 +29,7 @@ APPS = [
     {"id": "reader", "name": "Reader", "desc": "Read .txt and .epub books. Copy them to the books folder with Phone Files.", "bin": "reader", "data": ["data/books"]},
     {"id": "pixel", "name": "Pixel", "desc": "Draw pixel art. Saves .pix files and .bmp pictures.", "bin": "pixel", "data": ["data/pixel"]},
     {"id": "fonts", "name": "Reading fonts", "desc": "OpenDyslexic, Atkinson Hyperlegible, and Lexend for Reader and Bible. Choose one in the momPKT settings.", "bin": None, "data": ["data/fonts"], "extra": ["data/fonts/OpenDyslexic.otf", "data/fonts/AtkinsonHyperlegible.ttf", "data/fonts/Lexend.ttf"]},
-    {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic and .lua). Put carts in the carts folder. Sound works on iPhone only.", "bin": "tic80", "data": ["carts"], "only": ["ios7", "android"]},
+    {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic and .lua). Put carts in the carts folder. Comes with a beat box and a sound test.", "bin": "tic80", "data": ["carts"], "extra": ["carts/beatbox.lua", "carts/soundtest.lua"], "android_extra": ["musichelper.jar"], "only": ["ios7", "android"]},
     {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
     {"id": "console", "name": "Console", "desc": "A text console demo.", "bin": "condemo", "only": ["android"]},
@@ -98,7 +98,10 @@ def expected_files(plat, app_ids, tweak=True):
     files = list(core_files(plat, tweak))
     for a in apps_for(plat):
         if a["id"] in app_ids: files += app_files(plat, a)
-    return files
+    seen, out = set(), []
+    for f in files:                                    # two apps may share a file (the audio helper): list it once
+        if f[1] not in seen: seen.add(f[1]); out.append(f)
+    return out
 
 
 class Job:
@@ -321,7 +324,7 @@ def copy_files(dev, plat, files, log):
         for rel, remote, mode in files:
             src = pl(plat, rel)
             log("  copy %s" % remote)
-            if rel.startswith("data/"): dev.mkdir(os.path.dirname(remote))
+            if rel.startswith("data/") or rel.startswith("carts/"): dev.mkdir(os.path.dirname(remote))
             target = remote + ".new" if plat == "ios12" and is_lib(rel) else remote
             dev.put_file(src, target, mode)
             if plat == "ios12" and (rel.startswith("bin/") or is_lib(rel)):

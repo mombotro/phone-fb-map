@@ -17,7 +17,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `condemo` | A scrolling text console. | iPhone 4, Nexus 4 |
 | `fbshell` | A shell with an on-screen keyboard. | iPhone 4, Nexus 4 |
 | `calib` | Measures the touch axes. It writes the result to a file. | iPhone 4 |
-| `tic80` | A TIC-80 player for `.tic` and `.lua` carts. Sound plays on iPhone. Android has no sound yet. | iPhone 4 (Android: the Kindle Fire is being tested) |
+| `tic80` | A TIC-80 player for `.tic` and `.lua` carts, with sound. In landscape the game is in the middle, the D-pad on the left, and the buttons on the right. It comes with two carts: a beat box (loops you switch on and off, faster or slower) and a sound test. | iPhone 4, Kindle Fire |
 | `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. On Android it plays through the system MediaPlayer. | iPhone 4, LG Intuition |
 | `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
 | `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |

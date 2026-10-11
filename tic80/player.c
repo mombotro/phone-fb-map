@@ -73,15 +73,29 @@ int main(int argc, char **argv) {
     PlatInfo pi;
     if (plat_init(&pi) || plat_touch_init(&pi)) return 1;
     int W = pi.w, H = pi.h;
-    int scale = W / TIC80_FULLWIDTH; if (scale < 1) scale = 1;
-    int gw = TIC80_FULLWIDTH * scale, gh = TIC80_FULLHEIGHT * scale;
-    int gx = (W - gw) / 2, gy = 8;
-
-    // controls layout (below the game)
-    int cy = gy + gh + (H - gy - gh) / 2, avail = H - gy - gh;
-    int R = (W * 20 / 100 < avail * 38 / 100) ? W * 20 / 100 : avail * 38 / 100;     // d-pad radius
-    int dcx = W * 24 / 100, bcx = W * 76 / 100, S = R * 62 / 100, br = R * 38 / 100;
-    int exit_w = 130, exit_h = 52;
+    // Portrait: the game on top, the controls below. Landscape (wider than tall): the game in the middle, the d-pad on the left
+    // and the buttons on the right. The game is scaled by a whole number, as large as still leaves room at the sides.
+    int land = W > H;
+    int scale, gw, gh, gx, gy, cy, R, dcx, bcx, S, br, exit_x, exit_y;
+    const int exit_w = 130, exit_h = 52;
+    if (land) {
+        int need = H * 36 / 100;                                                  // room for one side of the controls
+        scale = (W - 2 * need) / TIC80_FULLWIDTH; if (scale * TIC80_FULLHEIGHT > H) scale = H / TIC80_FULLHEIGHT; if (scale < 1) scale = 1;
+        gw = TIC80_FULLWIDTH * scale; gh = TIC80_FULLHEIGHT * scale;
+        gx = (W - gw) / 2; gy = (H - gh) / 2; cy = H / 2;
+        int side = gx > 0 ? gx : W / 6;
+        R = side * 42 / 100 < H * 26 / 100 ? side * 42 / 100 : H * 26 / 100;      // d-pad radius
+        dcx = side / 2; bcx = W - side / 2; S = R * 62 / 100; br = R * 38 / 100;
+        exit_x = 0; exit_y = 0;
+    } else {
+        scale = W / TIC80_FULLWIDTH; if (scale < 1) scale = 1;
+        gw = TIC80_FULLWIDTH * scale; gh = TIC80_FULLHEIGHT * scale;
+        gx = (W - gw) / 2; gy = 8;
+        int avail = H - gy - gh; cy = gy + gh + avail / 2;
+        R = (W * 20 / 100 < avail * 38 / 100) ? W * 20 / 100 : avail * 38 / 100;
+        dcx = W * 24 / 100; bcx = W * 76 / 100; S = R * 62 / 100; br = R * 38 / 100;
+        exit_x = 0; exit_y = H - exit_h;
+    }
 
     tic80 *tic = tic80_create(TIC80_SAMPLERATE, TIC80_PIXEL_COLOR_ARGB8888);
     tic->callback.trace = trace_cb; tic->callback.error = error_cb; tic->callback.exit = exit_cb;
@@ -108,7 +122,7 @@ int main(int argc, char **argv) {
                 if (my < 0) my = 0; if (my > TIC80_HEIGHT - 1) my = TIC80_HEIGHT - 1;
                 continue;
             }
-            if (!prev_down[t[i].id & 15] && tx < exit_w && ty >= H - exit_h) { g_quit = 1; continue; }
+            if (!prev_down[t[i].id & 15] && tx >= exit_x && tx < exit_x + exit_w && ty >= exit_y && ty < exit_y + exit_h) { g_quit = 1; continue; }
             if (in_circle(tx, ty, dcx, cy, R * 13 / 10)) {
                 int dx = tx - dcx, dy = ty - cy, th = R * 3 / 10;
                 if (dx > th) right = 1; if (dx < -th) left = 1; if (dy > th) down = 1; if (dy < -th) up = 1;
@@ -179,8 +193,8 @@ int main(int argc, char **argv) {
             draw_disk(&s, bt[i].cx, bt[i].cy, br, bt[i].p ? 0xFFFFFF : bt[i].c);
             draw_text(&s, bt[i].cx - 8 * 2 / 1 / 2 * 1 - 0, bt[i].cy - 16, 2, bt[i].l, bt[i].p ? 0x101010 : 0xFFFFFF);
         }
-        draw_rect(&s, 0, H - exit_h, exit_w, exit_h, 0x883333);
-        draw_text(&s, 28, H - exit_h + 10, 2, "EXIT", 0xFFFFFF);
+        draw_rect(&s, exit_x, exit_y, exit_w, exit_h, 0x883333);
+        draw_text(&s, exit_x + 28, exit_y + 10, 2, "EXIT", 0xFFFFFF);
 
         plat_flip();
         frames++;

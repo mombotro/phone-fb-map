@@ -132,6 +132,7 @@ PLAT_FN void plat_screen_wake(void) { plat__sync_flag(); if (plat__off) plat__sc
 // so they get a 600x1024 buffer, and flip rotates it into the framebuffer. plat__rot: 0 none, 1 or 3 = the two directions.
 // The choice comes from $PLAT_ROTATE, then the file /data/local/tmp/plat_rotate (a single digit), then it is automatic.
 static int plat__rot, plat__lw, plat__lh;
+static uint32_t *plat__sbuf;          // with no rotation: draw here, copy to the screen page at flip, so nothing shows half drawn
 static uint32_t *plat__lbuf;
 
 static int plat__rotation_setting(void) {
@@ -337,6 +338,10 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     if (plat__v.red.offset == 24 && plat__v.green.offset == 16 && plat__v.blue.offset == 8 && plat__v.transp.offset == 0) {
         pi->rs = 0; pi->gs = 8; pi->bs = 16; pi->alpha = 0xFF000000u;
     }
+    if (!plat__rot) {                                        // no rotation: still draw in memory and copy to the page at flip, so the page on screen is never half drawn
+        plat__sbuf = calloc(1, (size_t)plat__v.yres * plat__f.line_length);
+        if (plat__sbuf) fprintf(stderr, "framebuffer: %d pages, drawing in memory and copying at flip\n", plat__pages);
+    }
     pi->theme = plat__theme_setting();
     plat__timezone();
     plat__bl_find();                                           // after wake_panel: the level to return to when the screen comes back
@@ -348,6 +353,7 @@ PLAT_FN int plat_init(PlatInfo *pi) {
 PLAT_FN uint32_t *plat_begin(int *stride_px) {
     if (plat__rot) { *stride_px = plat__lw; return plat__lbuf; }
     *stride_px = plat__f.line_length / 4;
+    if (plat__sbuf) return plat__sbuf;
     return (uint32_t *)(plat__base + (size_t)plat__page * plat__v.yres * plat__f.line_length);
 }
 
@@ -365,6 +371,7 @@ static void plat__rotate_into_page(void) {
 PLAT_FN void plat_flip(void) {
     if (plat__off) { usleep(60000); return; }                  // the screen is off: do not draw
     if (plat__rot) plat__rotate_into_page();
+    else if (plat__sbuf) memcpy(plat__base + (size_t)plat__page * plat__v.yres * plat__f.line_length, plat__sbuf, (size_t)plat__v.yres * plat__f.line_length);
     struct fb_var_screeninfo pv = plat__v;
     pv.yoffset = plat__page * plat__v.yres;
     ioctl(plat__fd, FBIOPAN_DISPLAY, &pv);

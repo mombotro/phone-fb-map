@@ -48,4 +48,5 @@ else echo "  no tools/bible_asv.txt: run tools/make_bible.py to add the Bible"; 
 if [ -d tools/fonts ] && ls tools/fonts/* >/dev/null 2>&1; then      # the reading fonts, from tools/fetch_fonts.sh
     for d in ios7 ios12 android; do mkdir -p $P/$d/data/fonts; cp tools/fonts/* $P/$d/data/fonts/; done
 else echo "  no tools/fonts: run tools/fetch_fonts.sh to add the reading fonts"; fi
+for d in ios7 android; do mkdir -p $P/$d/carts; cp tic80/carts/*.lua $P/$d/carts/; done       # the sample TIC-80 carts
 echo "payload ready: $(find $P -type f | wc -l | tr -d ' ') files"

@@ -79,6 +79,65 @@ static void snd_push(const int16_t *samples, int frames) {
 static void snd_close(void) {
     if (snd_q) { snd_stop(snd_q, true); snd_dispose(snd_q, true); snd_q = NULL; }
 }
+#elif defined(__ANDROID__)
+/* Android: a Java helper (music/android/Pcm.java, started with app_process) plays raw stereo PCM from a pipe through AudioTrack.
+   app_process works while the Android framework is stopped, because AudioFlinger keeps running. The pipe is made small and
+   non-blocking, so a slow helper drops sound instead of making the game wait, and the delay stays short. */
+#include <fcntl.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#define SND_JAR "/data/local/tmp/musichelper.jar"
+#ifndef F_SETPIPE_SZ
+#define F_SETPIPE_SZ 1031
+#endif
+static int snd_fd = -1; static pid_t snd_pid;
+
+static int snd_init(int rate) {
+    signal(SIGPIPE, SIG_IGN);
+    if (access(SND_JAR, R_OK)) { fprintf(stderr, "no sound: missing %s\n", SND_JAR); return -1; }
+    int to[2], from[2];
+    if (pipe(to) || pipe(from)) return -1;
+    snd_pid = fork();
+    if (snd_pid < 0) return -1;
+    if (snd_pid == 0) {
+        dup2(to[0], 0); dup2(from[1], 1);
+        close(to[0]); close(to[1]); close(from[0]); close(from[1]);
+        if (!getenv("ANDROID_ROOT")) setenv("ANDROID_ROOT", "/system", 1);
+        if (!getenv("ANDROID_DATA")) setenv("ANDROID_DATA", "/data", 1);
+        if (!getenv("LD_LIBRARY_PATH")) setenv("LD_LIBRARY_PATH", "/system/lib", 1);
+        char r[16], v[16]; snprintf(r, sizeof r, "%d", rate); snprintf(v, sizeof v, "%d", plat_volume_get());
+        execl("/system/bin/app_process", "app_process", "-Djava.class.path=" SND_JAR, "/system/bin", "Pcm", r, v, (char *)NULL);
+        _exit(127);
+    }
+    close(to[0]); close(from[1]);
+    fcntl(from[0], F_SETFL, fcntl(from[0], F_GETFL) | O_NONBLOCK);
+    char buf[64]; int len = 0, ok = 0;
+    for (int i = 0; i < 160 && !ok; i++) {                       /* wait up to 8 s for "ready" */
+        ssize_t n = read(from[0], buf + len, sizeof buf - 1 - (size_t)len);
+        if (n > 0) { len += (int)n; buf[len] = 0; if (strstr(buf, "ready")) ok = 1; }
+        int st; if (waitpid(snd_pid, &st, WNOHANG) == snd_pid) { fprintf(stderr, "sound helper exited early\n"); close(to[1]); close(from[0]); snd_pid = 0; return -1; }
+        if (!ok) usleep(50000);
+    }
+    close(from[0]);
+    if (!ok) { fprintf(stderr, "sound helper did not start\n"); close(to[1]); kill(snd_pid, SIGTERM); snd_pid = 0; return -1; }
+    fcntl(to[1], F_SETPIPE_SZ, 8192);                            /* about 46 ms of sound: the most that can wait in the pipe */
+    fcntl(to[1], F_SETFL, fcntl(to[1], F_GETFL) | O_NONBLOCK);
+    snd_fd = to[1];
+    return 0;
+}
+/* samples = interleaved stereo s16, frames = number of stereo frames */
+static void snd_push(const int16_t *samples, int frames) {
+    if (snd_fd < 0) return;
+    (void)!write(snd_fd, samples, (size_t)frames * 4);           /* a full pipe drops the sound */
+}
+static void snd_close(void) {
+    if (snd_fd >= 0) { close(snd_fd); snd_fd = -1; }
+    if (snd_pid > 0) { usleep(200000); kill(snd_pid, SIGTERM); waitpid(snd_pid, NULL, 0); snd_pid = 0; }
+}
 #else
 static int snd_init(int rate) { (void)rate; return -1; }
 static void snd_push(const int16_t *s, int n) { (void)s; (void)n; }

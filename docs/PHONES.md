@@ -110,7 +110,7 @@ The touch panel has portrait axes, and the code handles that. Set `/data/local/t
 | Reader (txt and epub), Pixel art, Paint with colors and save | Works | Reader (txt, epub, pdf text) keeps your place in each book. Phone Files lists Books, Paint pictures, and Pixel art, and shows pictures in a window. |
 | Reading fonts for all text, with a size slider | Works | Chosen in the momPKT settings. The note editor and the terminal keep the chunky font. |
 | Reader: PDF page pictures (scans) | Unknown | JPEG and plain pictures were checked on a Mac. JBIG2 and JPEG 2000 scans are not supported. |
-| TIC-80 | Unknown | Built for Android. Not checked on the phone. No sound on Android yet. |
+| TIC-80 with sound, and landscape | Works | Sound goes through a Java helper. Landscape puts the controls on both sides. Comes with a beat box cart and a sound test cart. |
 | Settings drop-down: Wi-Fi switch, sound, brightness, portrait or landscape | Works | Tap the name momPKT. Landscape turns the touch points too. |
 | Settings drop-down: Bluetooth switch | No | The Kindle has no Bluetooth rfkill entry. The switch shows n/a. |
 | Alarm sound | Works | A looped WAV file, played by the Java helper. |
