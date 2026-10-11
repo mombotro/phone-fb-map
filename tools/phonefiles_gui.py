@@ -12,6 +12,8 @@ import argparse, http.server, io, json, os, re, secrets, shutil, socket, sockets
 import posixpath, tempfile, threading, time, urllib.parse, webbrowser, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import fbtools_manager as fbm
 TOKEN = secrets.token_urlsafe(18)
 LAST_PING = time.time()
 FBLS_CANDIDATES = [os.path.join(HERE, "fbls_android"), os.path.join(HERE, "..", "build", "fbls_android")]
@@ -89,14 +91,15 @@ class IOS:
         self.udid, self.port = udid, port
         self.id = "ios:" + udid
         self.proc = None
-        self.name = self.detail = ""
+        self.name = self.detail = self.version = ""
 
     def info(self):
         def get(k):
             r = run(["ideviceinfo", "-u", self.udid, "-k", k], timeout=8)
             return r.stdout.decode().strip() if r.returncode == 0 else ""
         self.name = get("DeviceName") or "iPhone"
-        self.detail = " ".join(x for x in (get("ProductType"), "iOS " + get("ProductVersion")) if x.strip() != "iOS")
+        self.version = get("ProductVersion")
+        self.detail = " ".join(x for x in (get("ProductType"), "iOS " + self.version) if x.strip() != "iOS")
 
     def tunnel(self):
         try:
@@ -183,6 +186,36 @@ class IOS:
         r = self.sh("mkdir -p %s" % q(path), timeout=20)
         if r.returncode: raise PhoneError(r.stderr.decode(errors="replace"))
 
+    # --- used by the FB Tools manager (not limited by the protection rules: it only touches its own files)
+    def rmf(self, path):
+        return "rm -rf %s" % q(path)
+
+    def put_file(self, local, remote, mode=0o755):
+        self.tunnel()
+        with open(local, "rb") as f:
+            r = subprocess.run(self.ssh_cmd("mkdir -p %s && cat > %s && chmod %o %s" % (q(posixpath.dirname(remote)), q(remote), mode, q(remote))),
+                               stdin=f, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+        if r.returncode: raise PhoneError("copy to %s failed: %s" % (remote, r.stderr.decode(errors="replace").strip()))
+
+    def put_text(self, remote, text, mode=0o644):
+        tmp = tempfile.NamedTemporaryFile(delete=False); tmp.write(text.encode()); tmp.close()
+        try: self.put_file(tmp.name, remote, mode)
+        finally: os.unlink(tmp.name)
+
+    def get_text(self, remote):
+        r = self.sh("cat %s" % q(remote), timeout=20)
+        return r.stdout.decode(errors="replace") if r.returncode == 0 else None
+
+    def put_tree(self, local_dir, remote_parent):
+        """Copy a folder (such as FBTools.app) to remote_parent/<folder name>, with tar over SSH."""
+        self.tunnel()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            t.add(local_dir, arcname=os.path.basename(local_dir.rstrip("/")), filter=lambda ti: (setattr(ti, "uid", 0), setattr(ti, "gid", 0), ti)[2])
+        r = subprocess.run(self.ssh_cmd("mkdir -p %s && tar -C %s -xf -" % (q(remote_parent), q(remote_parent))), input=buf.getvalue(),
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        if r.returncode: raise PhoneError("copy of %s failed: %s" % (local_dir, r.stderr.decode(errors="replace").strip()))
+
     def rm(self, path):
         if not safe_to_delete(path): raise PhoneError("refusing to delete this path")
         self.guard(path)
@@ -215,7 +248,7 @@ class Android:
     def __init__(self, serial):
         self.serial = serial
         self.id = "android:" + serial
-        self.name = self.detail = ""
+        self.name = self.detail = self.version = ""
         self.root = None
         self.fbls_ok = False
 
@@ -226,6 +259,7 @@ class Android:
         def prop(k):
             r = self.adb("shell", "getprop " + k, timeout=8)
             return r.stdout.decode().strip()
+        self.version = prop("ro.build.version.release")
         self.name = prop("ro.product.model") or "Android"
         self.detail = "Android " + prop("ro.build.version.release")
         self.root = "uid=0" in self.adb("shell", "su -c id", timeout=10).stdout.decode()
@@ -305,6 +339,27 @@ class Android:
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
         return gen(), fname, size
+
+    # --- used by the FB Tools manager (not limited by the protection rules: it only touches its own files)
+    def rmf(self, path):
+        return "[ -e %s ] && rm -r %s" % (q(path), q(path))        # this shell has no "rm -f"
+
+    def put_file(self, local, remote, mode=0o755):
+        stage = ANDROID_TMP + "/.pf_up"
+        r = self.adb("push", local, stage, timeout=900)
+        if r.returncode: raise PhoneError("push of %s failed: %s" % (local, r.stderr.decode(errors="replace").strip()))
+        self.mkdir(posixpath.dirname(remote))
+        self.sh("cat %s > %s; chmod %o %s; rm %s" % (stage, q(remote), mode, q(remote), stage), timeout=120)
+
+    def put_text(self, remote, text, mode=0o644):
+        tmp = tempfile.NamedTemporaryFile(delete=False); tmp.write(text.encode()); tmp.close()
+        try: self.put_file(tmp.name, remote, mode)
+        finally: os.unlink(tmp.name)
+
+    def get_text(self, remote):
+        r = self.sh("cat %s" % q(remote), timeout=20)
+        t = r.stdout.decode(errors="replace").replace("\r\n", "\n")
+        return t if r.returncode == 0 and "No such file" not in t else None
 
     def mkdir(self, path):
         parts = [x for x in path.split("/") if x]
@@ -431,8 +486,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 ts = [threading.Thread(target=st, args=(i, d)) for i, d in enumerate(devs)]
                 [t.start() for t in ts]; [t.join() for t in ts]
                 return self.reply(200, out)
+            if u.path == "/api/job":
+                j = fbm.JOBS.get(qs.get("id", [""])[0])
+                if not j: return self.reply(404, {"error": "unknown job"})
+                return self.reply(200, {"title": j.title, "lines": j.lines, "done": j.done, "ok": j.ok})
             d = get_device(qs.get("dev", [""])[0])
             path = qs.get("path", ["/"])[0]
+            if u.path == "/api/fbtools/status":
+                return self.reply(200, fbm.status(d))
             if u.path == "/api/ls":
                 ents = d.ls(path)
                 for e in ents:
@@ -470,17 +531,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 d.write(dest, self.rfile, length)
                 return self.reply(200, {"ok": True})
             body = json.loads(self.rfile.read(length) or b"{}")
+            if u.path.startswith("/api/fbtools/"):
+                return self.reply(200, {"job": self.fbtools_action(d, u.path.rsplit("/", 1)[1], body)})
             if u.path == "/api/mkdir": d.mkdir(body["path"])
             elif u.path == "/api/delete": d.rm(body["path"])
             elif u.path == "/api/rename": d.mv(body["from"], body["to"])
             else: return self.reply(404, {"error": "unknown call"})
             self.reply(200, {"ok": True})
-        except PhoneError as e:
+        except (PhoneError, fbm.FBToolsError) as e:
             self.reply(400, {"error": str(e)})
         except subprocess.TimeoutExpired:
             self.reply(504, {"error": "the phone did not answer in time"})
         except Exception as e:
             self.reply(500, {"error": "%s: %s" % (type(e).__name__, e)})
+
+
+def fbtools_start(dev, action, body):
+    """Start an FB Tools job on the phone and return its id."""
+    plat = fbm.platform_of(dev)
+    if not plat: raise PhoneError("This phone type is not supported by FB Tools.")
+    if action == "install":
+        mode, apps = body.get("mode", "home"), body.get("apps", [])
+        return fbm.start_job(dev, "Install FB Tools", lambda log: fbm.do_install(dev, plat, mode, apps, log)).id
+    if action == "uninstall":
+        rd = bool(body.get("remove_data"))
+        return fbm.start_job(dev, "Uninstall FB Tools", lambda log: fbm.do_uninstall(dev, plat, rd, log)).id
+    if action == "repair":
+        return fbm.start_job(dev, "Repair FB Tools", lambda log: fbm.do_repair(dev, plat, log)).id
+    if action == "mode":
+        mode = body.get("mode")
+        return fbm.start_job(dev, "Change start mode", lambda log: fbm.do_set_mode(dev, plat, mode, log)).id
+    if action == "app":
+        aid, act = body.get("id"), body.get("action")
+        if act not in ("add", "remove"): raise PhoneError("bad action")
+        return fbm.start_job(dev, "%s app" % act.capitalize(), lambda log: fbm.do_app(dev, plat, aid, act, log)).id
+    if action == "start":
+        return fbm.start_job(dev, "Start FB Tools", lambda log: fbm.do_start(dev, plat, log)).id
+    raise PhoneError("unknown FB Tools action")
+
+
+Handler.fbtools_action = lambda self, d, action, body: fbtools_start(d, action, body)
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):

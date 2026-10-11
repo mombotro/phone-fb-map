@@ -6,6 +6,7 @@ It runs on a jailbroken iPhone 4 (iOS 7.1.2), an iPhone 5s (iOS 12.5.7), a Nexus
 On top of the display code, the project has multitouch input, a text console, an on-screen keyboard, a shell, a TIC-80 player with sound, and a music player.
 One small platform layer hides the differences between the devices. On the iPhone, a small SpringBoard tweak lets a program own the screen for as long as it needs.
 
+To see which phones work and which features work on each one, read [docs/PHONES.md](docs/PHONES.md).
 For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). That file is written for LLM agents and for people who maintain the project.
 
 ## What you can run
@@ -63,8 +64,13 @@ To copy files to and from a phone, build the Mac app with `tools/build_phonefile
 It uses SSH for iPhones and `adb` for Android phones.
 It only deletes, renames, or overwrites your own files: notes, music, carts, and app data. System files and the programs on the phone are locked. A lock icon marks them.
 
-To start an Android phone on the picker at boot, run `launcher/android_boot.sh on`. The picker then has no Exit tile and starts again if it stops.
-`adb` still works. Run `launcher/android_boot.sh off` to undo it. The phone needs root.
+The FB Tools tab in Phone Files installs FB Tools on a phone, and removes it again. It also does these jobs:
+- Choose how FB Tools starts: boot straight into it (no Exit), an icon on the home screen, or nothing.
+- Add or remove one app at a time. Notes, music, and carts stay when you remove an app.
+- Repair a broken install. It checks each file against the copy in the app, and restores any that are missing or changed.
+
+Build the files for the app with `tools/build_payload.sh`, then `tools/build_phonefiles_app.sh`.
+To start an Android phone on the picker at boot without the app, run `launcher/android_boot.sh on`. `adb` still works. Run `launcher/android_boot.sh off` to undo it. The phone needs root.
 
 Kiosk mode makes the phone boot straight into the picker with no way out to the home screen. See `launcher/kiosk.sh` and the device map.
 

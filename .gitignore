@@ -28,3 +28,9 @@ tools/PhoneFiles.app/
 tools/fbls_android
 music/android/out/
 music/android/helper.jar
+tools/payload/
+launcher/android_apk/out/
+launcher/android_apk/*.apk
+launcher/android_apk/*.idsig
+launcher/android_apk/res/drawable-xhdpi/icon.png
+*.keystore

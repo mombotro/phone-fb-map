@@ -51,6 +51,24 @@
   .t.err { border-left-color:var(--bad); }
   .meter { height:5px; background:var(--line); border-radius:3px; margin-top:7px; overflow:hidden; }
   .meter i { display:block; height:100%; width:0; background:var(--accent); }
+  #tabs { display:flex; gap:4px; padding:8px 14px 0; background:var(--panel); }
+  #tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; padding:8px 14px; color:var(--dim); }
+  #tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  #fbt { flex:1; overflow:auto; padding:18px 22px; display:none; }
+  #fbt h3 { margin:22px 0 8px; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); }
+  #fbt h3:first-child { margin-top:0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .card.warn { border-color:var(--bad); }
+  .opt { display:flex; gap:10px; align-items:flex-start; padding:8px 4px; cursor:pointer; }
+  .opt.off { opacity:.45; cursor:not-allowed; }
+  .opt b { display:block; } .opt small { color:var(--dim); }
+  .approw { display:flex; align-items:center; gap:12px; padding:9px 4px; border-bottom:1px solid var(--line); }
+  .approw:last-child { border-bottom:0; }
+  .approw .nm { flex:1; } .approw small { color:var(--dim); display:block; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  #joblog { background:#0c1015; color:#cfe3d4; font:12px ui-monospace, Menlo, monospace; border-radius:8px; padding:10px 12px; margin-top:14px; max-height:230px; overflow:auto; white-space:pre-wrap; display:none; }
+  .chip { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px; border:1px solid var(--line); margin-left:8px; }
+  .chip.ok { color:var(--good); border-color:var(--good); }
   #nodev { padding:50px; color:var(--dim); line-height:1.6; }
 </style>
 </head>
@@ -63,6 +81,8 @@
     <div id="places"></div>
   </div>
   <div id="main">
+    <div id="tabs"><button id="tab-files" class="on">Files</button><button id="tab-fbt">FB Tools</button></div>
+    <div id="fbt"></div>
     <div id="bar">
       <button id="up" title="Go up one folder">&#8593;</button>
       <div id="crumbs"></div>
@@ -118,6 +138,7 @@ function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 function selectDevice(d) {
   dev = d; renderPlaces(); loadDevicesUi();
   go(d.places[0].path);
+  if ($("tab-fbt").classList.contains("on")) loadFbt();
 }
 function loadDevicesUi() { document.querySelectorAll(".dev").forEach((el, i) => el.classList.toggle("sel", devices[i] && dev && devices[i].id === dev.id)); }
 function renderPlaces() {
@@ -233,6 +254,86 @@ window.addEventListener("drop", async (e) => {
   else for (const f of e.dataTransfer.files) out.push({ file: f, rel: f.name });
   uploadFiles(out);
 });
+
+// ---------------------------------------------------------------- FB Tools tab
+let fbs = null, fbPoll = null;
+function showTab(t) {
+  $("tab-files").classList.toggle("on", t === "files"); $("tab-fbt").classList.toggle("on", t === "fbt");
+  $("bar").style.display = $("list").style.display = $("note").style.display = t === "files" ? "" : "none";
+  $("fbt").style.display = t === "fbt" ? "block" : "none";
+  if (t === "fbt") loadFbt();
+}
+$("tab-files").onclick = () => showTab("files"); $("tab-fbt").onclick = () => showTab("fbt");
+const MODE_TEXT = {
+  boot: ["Boot straight into FB Tools", "The phone starts FB Tools when it powers on. There is no way out to the normal screen, so use this on a phone that is only for FB Tools."],
+  home: ["An FB Tools icon on the home screen", "Tap the icon to start FB Tools. The phone works as normal otherwise."],
+  none: ["Nothing starts by itself", "The programs stay on the phone. Start them from the Mac."],
+};
+async function loadFbt() {
+  const box = $("fbt");
+  if (!dev) { box.innerHTML = "<p>Pick a phone first.</p>"; return; }
+  box.innerHTML = "<p>Looking at the phone...</p>";
+  try { fbs = await call("/api/fbtools/status", { dev: dev.id }); } catch (e) { box.innerHTML = "<p class='warn'>" + esc(e.message) + "</p>"; return; }
+  renderFbt();
+}
+function renderFbt() {
+  const box = $("fbt"), st = fbs;
+  const keepLog = $("joblog") ? $("joblog").outerHTML : "";
+  if (!st.supported) { box.innerHTML = `<h3>FB Tools on ${esc(dev.name)}</h3><div class="card warn">${esc(st.message)}</div>`; return; }
+  let h = `<h3>FB Tools on ${esc(dev.name)}<span class="chip ${st.installed ? "ok" : ""}">${st.installed ? "Installed" : "Not installed"}</span></h3>`;
+  if (!st.payload_ok) h += `<div class="card warn">The programs for this phone are not in the app. Run tools/build_payload.sh, then tools/build_phonefiles_app.sh.</div>`;
+  if (st.note) h += `<div class="card">${esc(st.note)}</div>`;
+  if (st.problems.length) h += `<div class="card warn"><b>${st.problems.length} file${st.problems.length > 1 ? "s are" : " is"} missing or changed.</b><br><small>${st.problems.slice(0, 6).map(esc).join("<br>")}</small><div class="row"><button class="primary" id="b-repair">Repair</button></div></div>`;
+  h += "<h3>How FB Tools starts</h3><div class='card'>";
+  const cur = st.installed ? st.mode : (window.pickedMode || (st.modes.includes("boot") ? "home" : "home"));
+  for (const m of ["boot", "home", "none"]) {
+    const ok = st.modes.includes(m), t = MODE_TEXT[m];
+    h += `<label class="opt ${ok ? "" : "off"}"><input type="radio" name="mode" value="${m}" ${m === cur ? "checked" : ""} ${ok ? "" : "disabled"}><span><b>${t[0]}</b><small>${ok ? t[1] : "This phone cannot do this."}</small></span></label>`;
+  }
+  if (st.installed) h += `<div class="row"><button id="b-mode">Apply this start mode</button></div>`;
+  h += "</div><h3>Apps</h3><div class='card'>";
+  for (const a of st.apps) {
+    h += `<div class="approw"><div class="nm"><b>${esc(a.name)}</b><small>${esc(a.desc)}${a.available ? "" : " (not built)"}</small></div>`;
+    if (st.installed) h += a.installed ? `<span class="chip ok">Installed</span><button data-app="${a.id}" data-act="remove">Remove</button>` : `<button data-app="${a.id}" data-act="add" ${a.available ? "" : "disabled"}>Add</button>`;
+    else h += `<label><input type="checkbox" class="pick" value="${a.id}" ${a.available ? "checked" : "disabled"}> Install</label>`;
+    h += "</div>";
+  }
+  h += "</div><h3>Manage</h3><div class='card'>";
+  if (!st.installed) h += `<div class="row" style="margin-top:0"><button class="primary" id="b-install" ${st.payload_ok ? "" : "disabled"}>Install FB Tools</button></div>`;
+  else h += `<div class="row" style="margin-top:0"><button id="b-start">Start FB Tools now</button><button id="b-repair2">Repair (restore missing files)</button><button class="danger" id="b-uninst">Uninstall</button></div>
+    <label style="display:block;margin-top:10px"><input type="checkbox" id="rmdata"> When I uninstall, also delete my notes, music, and carts</label>`;
+  h += `</div>${keepLog || '<div id="joblog"></div>'}`;
+  box.innerHTML = h;
+  const on = (id, fn) => { const e = $(id); if (e) e.onclick = fn; };
+  document.querySelectorAll("input[name=mode]").forEach((r) => r.onchange = () => { window.pickedMode = r.value; });
+  const mode = () => (document.querySelector("input[name=mode]:checked") || {}).value || "none";
+  on("b-install", () => runJob("install", { mode: mode(), apps: [...document.querySelectorAll(".pick:checked")].map((c) => c.value) }));
+  on("b-mode", () => runJob("mode", { mode: mode() }));
+  on("b-repair", () => runJob("repair", {})); on("b-repair2", () => runJob("repair", {}));
+  on("b-start", () => runJob("start", {}));
+  on("b-uninst", () => { if (confirm("Remove FB Tools from this phone?" + ($("rmdata").checked ? "\n\nThis also DELETES your notes, music, and carts." : "\n\nYour notes, music, and carts stay."))) runJob("uninstall", { remove_data: $("rmdata").checked }); });
+  box.querySelectorAll("[data-app]").forEach((b) => b.onclick = () => runJob("app", { id: b.dataset.app, action: b.dataset.act }));
+}
+async function runJob(action, body) {
+  const lg = $("joblog"); lg.style.display = "block"; lg.textContent = "Starting...\n";
+  document.querySelectorAll("#fbt button").forEach((b) => b.disabled = true);
+  let id;
+  try { id = (await call("/api/fbtools/" + action, { dev: dev.id }, { method: "POST", body: JSON.stringify(body) })).job; }
+  catch (e) { lg.textContent += "FAILED: " + e.message + "\n"; loadFbtKeep(); return; }
+  clearInterval(fbPoll);
+  fbPoll = setInterval(async () => {
+    try {
+      const j = await call("/api/job", { id });
+      lg.textContent = j.title + "\n" + j.lines.join("\n") + "\n"; lg.scrollTop = lg.scrollHeight;
+      if (j.done) { clearInterval(fbPoll); toast(j.ok ? j.title + ": done" : j.title + " failed", !j.ok); loadFbtKeep(); }
+    } catch (e) { clearInterval(fbPoll); lg.textContent += "Lost contact with the app: " + e.message + "\n"; }
+  }, 700);
+}
+async function loadFbtKeep() {   // reload the status but keep the log text
+  const text = $("joblog") ? $("joblog").textContent : "";
+  try { fbs = await call("/api/fbtools/status", { dev: dev.id }); } catch (e) { return; }
+  renderFbt(); const lg = $("joblog"); if (lg && text) { lg.style.display = "block"; lg.textContent = text; lg.scrollTop = lg.scrollHeight; }
+}
 
 setInterval(() => api("/api/ping").catch(() => { }), 10000);
 api("/api/ping").catch(() => { });

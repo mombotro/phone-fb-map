@@ -1,0 +1,38 @@
+#!/bin/bash
+# Collects everything the Phone Files app can install on a phone into tools/payload/ (and builds what is missing).
+# Run it before tools/build_phonefiles_app.sh. Needs the same tools as the builds it calls.
+set -e
+cd "$(dirname "$0")/.."
+SDK=${IOS_SDK:-$HOME/sdks/iPhoneOS9.3.sdk}
+echo "== building programs"
+./build.sh >/dev/null
+tools/build_ios12.sh >/dev/null
+music/build.sh >/dev/null 2>&1 || echo "  (iPhone music player not rebuilt: music/third_party missing?)"
+music/build_android.sh >/dev/null
+launcher/android_apk/build.sh >/dev/null
+NDK=$(ls -d "$HOME"/Library/Android/sdk/ndk/27.* | head -1)
+"$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang" -O2 -static -fno-pie -fno-emulated-tls -o build/fbls_android tools/fbls.c
+
+P=tools/payload; rm -rf $P; mkdir -p $P/ios7/bin $P/ios7/FBTools.app $P/ios12/bin $P/ios12/FBTools.app $P/android/bin
+echo "== iPhone 4 (iOS 7)"
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer musicplayer:musicplayer tic80:tic80 calib:calib fbreset:fbreset; do
+    src=build/${f##*:}_ios; [ -f "$src" ] && cp "$src" $P/ios7/bin/${f%%:*} || echo "  missing ${f##*:}_ios"
+done
+cp launcher/run_launcher_ios.sh launcher/run_kiosk_ios.sh launcher/com.local.fbkiosk.plist $P/ios7/
+cp tweak/FBMode.plist $P/ios7/ && [ -f tweak/FBMode.dylib ] && cp tweak/FBMode.dylib $P/ios7/ || echo "  missing tweak/FBMode.dylib (build it as shown in docs/DEVICE-MAP.md)"
+clang -arch armv7 -O2 -miphoneos-version-min=7.0 -isysroot "$SDK" -Wl,-w -o $P/ios7/FBTools.app/FBTools launcher/fbtools_stub.c && ldid -S $P/ios7/FBTools.app/FBTools
+cp launcher/Info.plist $P/ios7/FBTools.app/Info.plist; python3 launcher/make_icon.py $P/ios7/FBTools.app
+echo "== iPhone 5s (iOS 12)"
+for f in build/ios12/*; do cp "$f" $P/ios12/bin/; done
+cp common/ios12.entitlements.plist common/run_ios12.sh $P/ios12/
+clang -target arm64-apple-ios9.0 -O2 -DIOS12 -isysroot "$SDK" -Wl,-w -o $P/ios12/FBTools.app/FBTools launcher/fbtools_stub.c
+cp launcher/Info.plist $P/ios12/FBTools.app/Info.plist; python3 launcher/make_icon.py $P/ios12/FBTools.app
+echo "== Android"
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer musicplayer:musicplayer condemo:condemo; do
+    cp build/${f##*:}_android $P/android/bin/${f%%:*}
+done
+cp build/fbls_android $P/android/bin/fbls; cp build/fbstart_android $P/android/bin/fbstart
+cp music/android/helper.jar $P/android/musichelper.jar
+cp common/run_launcher.sh $P/android/run_launcher.sh; cp launcher/run_boot_android.sh $P/android/run_boot.sh
+cp launcher/android_apk/FBTools.apk $P/android/FBTools.apk
+echo "payload ready: $(find $P -type f | wc -l | tr -d ' ') files"

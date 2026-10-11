@@ -11,7 +11,8 @@ if [ ! -f ../build/fbls_android ] && [ -n "$NDK" ]; then       # the small folde
     "$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang" -O2 -static -fno-pie -fno-emulated-tls -o ../build/fbls_android fbls.c
 fi
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp phonefiles_gui.py phonefiles_gui.html "$APP/Contents/Resources/"
+cp phonefiles_gui.py phonefiles_gui.html fbtools_manager.py "$APP/Contents/Resources/"
+[ -d payload ] && cp -R payload "$APP/Contents/Resources/payload"
 [ -f ../build/fbls_android ] && cp ../build/fbls_android "$APP/Contents/Resources/fbls_android"
 cat > "$APP/Contents/MacOS/PhoneFiles" <<LAUNCH
 #!/bin/bash
