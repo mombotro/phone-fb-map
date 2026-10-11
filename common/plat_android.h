@@ -1,4 +1,5 @@
 // plat_android.h - platform layer over /dev/graphics/fb0 (msm fbdev, 3 pages) and evdev touch.
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
@@ -139,6 +140,30 @@ static int plat__rotation_setting(void) {
     FILE *f = fopen("/data/local/tmp/plat_rotate", "r");
     if (f) { int v = -1; if (fscanf(f, "%d", &v) == 1) { fclose(f); return v; } fclose(f); }
     return -1;                                                  // not set: decide from the shape of the screen
+}
+
+// The battery level (0 to 100) and whether it charges. Returns -1 when the phone shows no battery.
+static int plat_battery(int *pct, int *charging) {
+    DIR *d = opendir("/sys/class/power_supply"); if (!d) return -1;
+    struct dirent *e; int found = -1;
+    while (found < 0 && (e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char p[256], v[64];
+        snprintf(p, sizeof p, "/sys/class/power_supply/%s/type", e->d_name);
+        FILE *f = fopen(p, "r"); if (!f) continue;
+        v[0] = 0; if (!fgets(v, sizeof v, f)) v[0] = 0; fclose(f);
+        if (!strstr(v, "Battery")) continue;
+        snprintf(p, sizeof p, "/sys/class/power_supply/%s/capacity", e->d_name);
+        f = fopen(p, "r"); if (!f) continue;
+        int c = -1; if (fscanf(f, "%d", &c) != 1) c = -1; fclose(f);
+        if (c < 0 || c > 100) continue;
+        *pct = c; *charging = 0;
+        snprintf(p, sizeof p, "/sys/class/power_supply/%s/status", e->d_name);
+        if ((f = fopen(p, "r"))) { v[0] = 0; if (fgets(v, sizeof v, f)) *charging = strstr(v, "Charging") != NULL; fclose(f); }
+        found = 0;
+    }
+    closedir(d);
+    return found;
 }
 
 // A static binary has no Android time zone. Ask the phone's own date command for the offset (like -0500) and use it.

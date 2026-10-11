@@ -126,6 +126,28 @@ PLAT_FN void plat_close(void) {
 }
 
 // For a launcher that waits on a child program: keep the flag fresh without drawing.
+// The battery level (0 to 100) and whether it charges, from the IOKit power-source service. Returns -1 when it cannot be read.
+static int plat_battery(int *pct, int *charging) {
+    typedef unsigned (*MatchFn)(unsigned, CFDictionaryRef);
+    static void *io; static CFMutableDictionaryRef (*Matching)(const char *); static MatchFn GetService;
+    static CFTypeRef (*Prop)(unsigned, CFStringRef, CFAllocatorRef, unsigned); static int (*Release)(unsigned);
+    if (!io) {
+        io = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW); if (!io) return -1;
+        Matching = dlsym(io, "IOServiceMatching"); GetService = (MatchFn)dlsym(io, "IOServiceGetMatchingService");
+        Prop = dlsym(io, "IORegistryEntryCreateCFProperty"); Release = dlsym(io, "IOObjectRelease");
+    }
+    if (!Matching || !GetService || !Prop || !Release) return -1;
+    unsigned svc = GetService(0, Matching("IOPMPowerSource")); if (!svc) return -1;
+    int ok = -1, v = 0;
+    CFTypeRef cap = Prop(svc, CFSTR("CurrentCapacity"), NULL, 0);
+    if (cap) { if (CFGetTypeID(cap) == CFNumberGetTypeID() && CFNumberGetValue(cap, kCFNumberIntType, &v) && v >= 0 && v <= 100) { *pct = v; ok = 0; } CFRelease(cap); }
+    *charging = 0;
+    CFTypeRef ch = Prop(svc, CFSTR("IsCharging"), NULL, 0);
+    if (ch) { if (CFGetTypeID(ch) == CFBooleanGetTypeID()) *charging = CFBooleanGetValue(ch); CFRelease(ch); }
+    Release(svc);
+    return ok;
+}
+
 PLAT_FN void plat_keepalive(void) { plat__flag_refresh(); }
 
 // Called when the program is killed or crashes: remove the flag and take our surface off the overlay layer,

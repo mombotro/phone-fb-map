@@ -147,7 +147,8 @@ int main(int argc, char **argv) {
 
     enum { S_MAIN, S_CARTS, S_SHUT } state = S_MAIN;
     int scroll = 0, dirty = 3, pressed = -1, menu = 0;
-    const int PW_X = W - GAP - 126 - 76, PW_Y = 14, PW = 64;                    // the power button in the title bar, next to the time
+    double bat_until = 0;                                                       // while set, a box shows the exact battery percentage
+    const int BAT_X = W - GAP - 126 - 70, PW_X = BAT_X - 76, PW_Y = 14, PW = 64;                    // the power button in the title bar, next to the time
     const int MENU_W = W - 2 * GAP < 380 ? W - 2 * GAP : 380, MENU_X = W - GAP - MENU_W, MENU_Y = 92, MENU_ROW = 90;
     const int menu_rows = kiosk ? 1 : 2;                                         // Restart ends the picker, so it is not offered at boot
     double t0 = now();
@@ -181,6 +182,8 @@ int main(int argc, char **argv) {
                 else state = S_SHUT;                                            // Shut down asks again on its own screen
             }
             menu = 0; dirty = 3;
+        } else if (tap && state == S_MAIN && tx >= BAT_X - 8 && tx < BAT_X + 66 && ty < MENU_Y) {
+            bat_until = now() + 4; dirty = 3;                                    // tap the battery: show the percentage for a few seconds
         } else if (tap && state == S_MAIN && tx >= PW_X - 8 && tx < PW_X + PW + 8 && ty < MENU_Y) {
             menu = 1; dirty = 3;
         } else if (tap && state == S_MAIN) {
@@ -227,6 +230,7 @@ int main(int argc, char **argv) {
             if (scroll < 0) scroll = 0; if (scroll > max_scroll) scroll = max_scroll;
         }
 
+        if (bat_until && now() > bat_until) { bat_until = 0; dirty = 3; }
         { static int last_min = -1; time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); if (lt.tm_min != last_min) { last_min = lt.tm_min; dirty = 3; } }
         if (dirty > 0) {
             int stride; uint32_t *px = plat_begin(&stride);
@@ -238,6 +242,19 @@ int main(int argc, char **argv) {
                 draw_text(&s, GAP + 6, 26, 5, "momPKT", 0xFFFFFF);
                 { time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); char clock[8]; strftime(clock, sizeof clock, "%H:%M", &lt);
                   draw_text(&s, W - GAP - 5 * 8 * 3 - 6, 30, 3, clock, 0xFFFFFF); }
+                { int pct, chg;                                                  // the battery, left of the time; nothing if the phone shows none
+                  if (plat_battery(&pct, &chg) == 0) {
+                      uint32_t fg = s.theme ? 0x000000 : 0xFFFFFF;
+                      int bx = BAT_X, by = 30, bw = 52, bh = 28;
+                      draw_rect(&s, bx, by, bw, bh, fg); draw_rect(&s, bx + bw, by + 8, 5, bh - 16, fg);           // the body and the nub
+                      draw_rect(&s, bx + 3, by + 3, bw - 6, bh - 6, s.theme ? 0xFFFFFF : 0x26303E);
+                      int fw = (bw - 10) * pct / 100; if (pct > 0 && fw < 2) fw = 2;
+                      draw_rect(&s, bx + 5, by + 5, fw, bh - 10, pct <= 15 && !s.theme ? 0xE05050 : fg);
+                      if (chg) {                                                   // a plus, centered in the body, in the colour that shows against what is under it
+                          uint32_t pc = fw > bw / 2 - 5 ? (s.theme ? 0xFFFFFF : 0x26303E) : fg;
+                          draw_rect(&s, bx + bw / 2 - 8, by + bh / 2 - 2, 16, 4, pc); draw_rect(&s, bx + bw / 2 - 2, by + bh / 2 - 8, 4, 16, pc);
+                      }
+                  } }
                 { static const char *POWER[12] = { ".....##.....", ".....##.....", "..#..##..#..", ".##..##..##.", "##...##...##", "##...##...##",
                                                    "##........##", "##........##", ".##......##.", "..##....##..", "...######...", "............" };
                   uint32_t ink = s.theme ? 0x000000 : 0xFFFFFF;                  // in the palm look the bar is dark ink, so the icon is paper
@@ -262,6 +279,17 @@ int main(int argc, char **argv) {
                     draw_text(&s, x + (tile_w - (int)strlen(lab) * 8 * ls) / 2, ty0 + 16 * gs + 10, ls, lab, 0xFFFFFF);
                     if (show_sub) draw_text(&s, x + (tile_w - (int)strlen(sub) * 8) / 2, ty0 + 16 * gs + 10 + 16 * ls + 6, 1, sub, s.theme ? 0x8899AA : 0xDDDDDD);
                     (void)sl;
+                }
+                if (bat_until) {
+                    int pct, chg;
+                    if (plat_battery(&pct, &chg) == 0) {
+                        char b1[16], b2[24]; snprintf(b1, sizeof b1, "%d%%", pct); snprintf(b2, sizeof b2, "%s", chg ? "charging" : "on battery");
+                        int bw2 = 220, bx2 = W - GAP - bw2, by2 = 96;
+                        draw_rect(&s, bx2, by2, bw2, 96, s.theme ? 0xFFFFFF : 0x9AAABB);
+                        draw_rect(&s, bx2 + 4, by2 + 4, bw2 - 8, 88, s.theme ? 0x000000 : 0x202C3C);
+                        draw_text(&s, bx2 + (bw2 - (int)strlen(b1) * 24) / 2, by2 + 14, 3, b1, 0xFFFFFF);
+                        draw_text(&s, bx2 + (bw2 - (int)strlen(b2) * 8) / 2, by2 + 66, 1, b2, s.theme ? 0x8899AA : 0xDDDDDD);
+                    }
                 }
                 if (menu) {                                                      // the drop-down: which one?
                     draw_rect(&s, MENU_X, MENU_Y, MENU_W, menu_rows * MENU_ROW + 8, s.theme ? 0xFFFFFF : 0x9AAABB);
