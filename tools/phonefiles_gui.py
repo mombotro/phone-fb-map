@@ -253,6 +253,7 @@ class Android:
         self.id = "android:" + serial
         self.name = self.detail = self.version = ""
         self.root = None
+        self.adbroot = False
         self.fbls_ok = False
 
     def adb(self, *args, **kw):
@@ -265,10 +266,19 @@ class Android:
         self.version = prop("ro.build.version.release")
         self.name = prop("ro.product.model") or "Android"
         self.detail = "Android " + prop("ro.build.version.release")
-        self.root = "uid=0" in self.adb("shell", "su -c id", timeout=10).stdout.decode()
+        self.adbroot = False                                          # adbd itself runs as root (a userdebug ROM such as LineageOS): no su is needed
+        suroot = "uid=0" in self.adb("shell", "su -c id", timeout=10).stdout.decode()
+        if not suroot:
+            if "uid=0" in self.adb("shell", "id", timeout=10).stdout.decode(): self.adbroot = True
+            elif prop("ro.debuggable") == "1":                         # ask adbd to restart as root, then wait for the phone to come back
+                self.adb("root", timeout=15)
+                run(["adb", "-s", self.serial, "wait-for-device"], timeout=30)
+                time.sleep(1.5)
+                self.adbroot = "uid=0" in self.adb("shell", "id", timeout=10).stdout.decode()
+        self.root = suroot or self.adbroot
 
     def sh(self, cmd, **kw):
-        wrapped = "su -c " + q(cmd) if self.root else cmd
+        wrapped = "su -c " + q(cmd) if (self.root and not self.adbroot) else cmd
         return self.adb("shell", wrapped, **kw)
 
     def status(self):

@@ -91,7 +91,8 @@ You must sign programs on the phone with `ldid` and the entitlements in `common/
 | Multitouch | Works | |
 | Text console, keyboard, shell | Works | |
 | Paint | Works | |
-| App picker, Notes, Timer, Music | Unknown | The code is shared with the Intuition. Nobody ran it here. |
+| App picker | No | The screen stays black. The colour-bars test works, so drawing itself is fine. Something the picker does makes the display go black. Not solved. |
+| Notes, Timer, Music | Unknown | They need the picker, or a direct start. Not checked. |
 | Boot straight into FB Tools | Unknown | |
 | Phone Files and the FB Tools manager | Unknown | |
 

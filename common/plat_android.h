@@ -97,6 +97,30 @@ static void plat__bl_set(int v) {
     int fd = open(plat__bl_use, O_WRONLY); if (fd < 0) return;
     char b[16]; int l = snprintf(b, sizeof b, "%d", v); (void)!write(fd, b, (size_t)l); close(fd);
 }
+// The touch buttons under the screen (the LG Intuition has a light behind them) stay lit while the framework is stopped, and the light
+// drains the battery. Keep it off while a program runs. The file /data/local/tmp/buttons_on keeps the light as it is. The old brightness
+// goes back when the program that started everything ends (Android then lights the buttons itself).
+#define PLAT_BTN_LED "/sys/class/leds/button-backlight/brightness"
+static int plat__btn_old = -1;
+static void plat__buttons_off(int force) {
+    static double last;
+    double t = plat__now();
+    if (!force && t - last < 2) return;
+    last = t;
+    if (access("/data/local/tmp/buttons_on", F_OK) == 0) return;
+    int fd = open(PLAT_BTN_LED, O_RDWR); if (fd < 0) return;
+    char b[16] = {0}; int n = (int)read(fd, b, sizeof b - 1), v = n > 0 ? atoi(b) : 0;
+    if (v != 0) {
+        if (plat__btn_old < 0) plat__btn_old = v;
+        lseek(fd, 0, SEEK_SET); (void)!write(fd, "0", 1);
+    }
+    close(fd);
+}
+static void plat__buttons_restore(void) {
+    if (plat__btn_old <= 0 || getenv("FB_PARENT")) return;                  // a tool started by the picker leaves the light off
+    int fd = open(PLAT_BTN_LED, O_WRONLY); if (fd < 0) return;
+    char b[16]; int l = snprintf(b, sizeof b, "%d", plat__btn_old); (void)!write(fd, b, (size_t)l); close(fd);
+}
 static void plat__screen_set(int off);
 
 // Called from plat_touch_poll in the program that shows something. A press of the power key toggles the screen.
@@ -125,6 +149,7 @@ static void plat__screen_set(int off) {
         struct fb_var_screeninfo pv = plat__v; pv.yoffset = (unsigned)(((plat__page + plat__pages - 1) % plat__pages) * (int)plat__v.yres);
         ioctl(plat__fd, FBIOPAN_DISPLAY, &pv);                              // show the last picture again
         plat__bl_set(plat__bl_on);
+        plat__buttons_off(1);
         unlink(PLAT_OFF_FLAG);
         plat__wake_t = plat__now();
     }
@@ -402,6 +427,7 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     plat__timezone();
     plat__bl_find();                                           // after wake_panel: the level to return to when the screen comes back
     if (!getenv("FB_PARENT")) unlink(PLAT_OFF_FLAG);           // a program started by the launcher keeps the state; a fresh start begins with the screen on
+    plat__buttons_off(1);
     plat__last = plat__now();
     return 0;
 }
@@ -440,6 +466,7 @@ PLAT_FN void plat_flip(void) {
 }
 
 PLAT_FN void plat_close(void) {
+    plat__buttons_restore();
     if (plat__off) plat__screen_set(0);                        // never leave the phone with its screen off
     struct fb_var_screeninfo z = plat__v; z.yoffset = 0;
     ioctl(plat__fd, FBIOPAN_DISPLAY, &z);
@@ -498,7 +525,7 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
 }
 
 PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
-    plat__sync_flag(); plat__power_events(1);
+    plat__sync_flag(); plat__power_events(1); plat__buttons_off(0);
     struct input_event ev[64];
     for (;;) {
         ssize_t n = read(plat__tfd, ev, sizeof ev);
@@ -564,5 +591,5 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
 }
 
 // For a launcher that waits on a child program. Nothing to refresh on Android.
-PLAT_FN void plat_keepalive(void) { plat__sync_flag(); plat__power_events(0); }
+PLAT_FN void plat_keepalive(void) { plat__sync_flag(); plat__power_events(0); plat__buttons_off(0); }
 PLAT_FN void plat_emergency_cleanup(void) {}           // nothing to clean up: the display is the plain framebuffer
