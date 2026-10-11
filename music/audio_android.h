@@ -97,7 +97,7 @@ static void stop_audio(void) {
 
 static int play_file(const char *path) {
     if (g_hin < 0) return -1;
-    hsend("vol %d", (int)(g_volume * 100));
+    hsend("vol %d", (int)(g_volume * plat_volume_get()));          // the master volume from the picker scales ours
     hsend("play %s", path);
     g_playing = 1; g_paused = 0; g_eof = 0; g_pos_ms = 0; g_dur_ms = 0;
     LOG("play %s", path);
@@ -113,7 +113,7 @@ static void audio_seek_fraction(double f) {
     g_pos_ms = (long)(f * g_dur_ms); hsend("seek %ld", g_pos_ms);
 }
 static void audio_set_paused(int p) { hsend(p ? "pause" : "resume"); g_paused = p; }
-static void audio_set_volume(float v) { hsend("vol %d", (int)(v * 100)); }
+static void audio_set_volume(float v) { hsend("vol %d", (int)(v * plat_volume_get())); }
 static void audio_end_info(char *b, size_t n) { snprintf(b, n, "pos %ld of %ld ms", g_pos_ms, g_dur_ms); }
 static void audio_info(char *b, size_t n) { snprintf(b, n, "pos_ms=%ld dur_ms=%ld eof=%d", g_pos_ms, g_dur_ms, g_eof); }
 

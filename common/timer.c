@@ -109,7 +109,7 @@ static void ring_sound(int on) {
         snd_push(buf, 512);
     }
 #else
-    if (on && !g_sent) { alarm_helper_send("vol 100\nloop " ALARM_WAV "\n"); g_sent = 1; }
+    if (on && !g_sent) { { int mv = plat_volume_get(); char vb[24]; snprintf(vb, sizeof vb, "vol %d\n", mv < 30 ? 30 : mv); alarm_helper_send(vb); alarm_helper_send("loop " ALARM_WAV "\n"); }   /* the alarm never goes below 30% */ g_sent = 1; }
     else if (!on && g_sent) { alarm_helper_send("stop\n"); g_sent = 0; }
 #endif
 }

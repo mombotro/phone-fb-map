@@ -105,6 +105,15 @@ static void run_once(const char *prog, long seconds, int kiosk) {
     logline("program ended, giving Android back");
     give_back_android();
     logline("start command sent");
+    // The picker can ask for an Android screen (Wi-Fi or Bluetooth list) by writing its action name in a file.
+    FILE *af = fopen(DIR "/after_start", "r");
+    if (af) {
+        char act[96] = ""; (void)!fgets(act, sizeof act, af); fclose(af); unlink(DIR "/after_start");
+        act[strcspn(act, "\r\n")] = 0;
+        int ok = strncmp(act, "android.settings.", 17) == 0;
+        for (const char *c = act; *c && ok; c++) if (!((*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') || *c == '.' || *c == '_')) ok = 0;
+        if (ok && !g_stop) { char cmd[160]; wait_ready(); snprintf(cmd, sizeof cmd, "am start -a %s", act); (void)!system(cmd); logline("opened an Android settings screen"); }
+    }
 }
 
 // Only one fbrun may run: a second tap on the icon, or the boot job and the icon together, must not start two pickers.

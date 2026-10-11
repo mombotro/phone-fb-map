@@ -166,6 +166,61 @@ static int plat_battery(int *pct, int *charging) {
     return found;
 }
 
+// ---- settings the picker can change (Android only). Android itself is stopped while the picker runs, so these use files and commands.
+// Master volume, 0 to 100, in /data/local/tmp/volume. The music player and the alarm multiply their own volume by it.
+#define PLAT_VOLUME_FILE "/data/local/tmp/volume"
+static int plat_volume_get(void) {
+    int v = 100; FILE *f = fopen(PLAT_VOLUME_FILE, "r");
+    if (f) { if (fscanf(f, "%d", &v) != 1) v = 100; fclose(f); }
+    return v < 0 ? 0 : v > 100 ? 100 : v;
+}
+static void plat_volume_set(int v) {
+    FILE *f = fopen(PLAT_VOLUME_FILE, "w"); if (!f) return;
+    fprintf(f, "%d\n", v < 0 ? 0 : v > 100 ? 100 : v); fclose(f); chmod(PLAT_VOLUME_FILE, 0666);
+}
+
+// The Wi-Fi interface: the first network device with "wlan" in its name (wlan0, tiwlan0). Returns 0 when there is none.
+static int plat__wifi_name(char *out, size_t n) {
+    DIR *d = opendir("/sys/class/net"); if (!d) return 0;
+    struct dirent *e; int ok = 0;
+    while (!ok && (e = readdir(d))) if (strstr(e->d_name, "wlan")) { snprintf(out, n, "%s", e->d_name); ok = 1; }
+    closedir(d); return ok;
+}
+// 1 when Wi-Fi is up, 0 when it is down, -1 when the phone has none.
+static int plat_wifi_state(void) {
+    char nm[32], p[96]; if (!plat__wifi_name(nm, sizeof nm)) return -1;
+    snprintf(p, sizeof p, "/sys/class/net/%s/flags", nm);
+    FILE *f = fopen(p, "r"); if (!f) return -1;
+    unsigned fl = 0; if (fscanf(f, "%x", &fl) != 1) fl = 0; fclose(f);
+    return (fl & 1) ? 1 : 0;
+}
+// Switch the interface down or up. Going down loses the default route, so it is saved first and put back when the link comes up.
+static void plat_wifi_set(int on) {
+    char nm[32], cmd[256]; if (!plat__wifi_name(nm, sizeof nm)) return;
+    static char gw[32] = "";
+    if (!on) {
+        FILE *f = fopen("/proc/net/route", "r");
+        if (f) {
+            char line[256], ifn[32]; unsigned dst, g;
+            while (fgets(line, sizeof line, f)) if (sscanf(line, "%31s %x %x", ifn, &dst, &g) == 3 && dst == 0 && g) {
+                snprintf(gw, sizeof gw, "%u.%u.%u.%u", g & 255, (g >> 8) & 255, (g >> 16) & 255, g >> 24); break;
+            }
+            fclose(f);
+        }
+        snprintf(cmd, sizeof cmd, "ifconfig %s down", nm);
+    } else if (gw[0]) snprintf(cmd, sizeof cmd, "ifconfig %s up; route add default gw %s dev %s", nm, gw, nm);
+    else snprintf(cmd, sizeof cmd, "ifconfig %s up", nm);
+    (void)!system(cmd);
+}
+
+// Portrait or landscape: write the rotation file the display layer reads at start. The program must start again to use it.
+static void plat_orientation_set(int landscape) {
+    int native_wide = plat__v.xres > plat__v.yres;
+    int rot = (landscape == native_wide) ? 0 : 1;                // landscape on a wide screen, or portrait on a tall one, needs no rotation
+    FILE *f = fopen("/data/local/tmp/plat_rotate", "w"); if (!f) return;
+    fprintf(f, "%d\n", rot); fclose(f); chmod("/data/local/tmp/plat_rotate", 0666);
+}
+
 // A static binary has no Android time zone. Ask the phone's own date command for the offset (like -0500) and use it.
 static void plat__timezone(void) {
     if (getenv("TZ")) return;
@@ -364,14 +419,17 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
         // Raw position as a fraction of the touch panel, 0..1 on each axis.
         double u = (plat__slots[s].x - plat__minx) / (double)(plat__maxx - plat__minx + 1);
         double v = (plat__slots[s].y - plat__miny) / (double)(plat__maxy - plat__miny + 1);
-        if (plat__rot && plat__tportrait) {
+        if (plat__tportrait) {
             // The panel's own axes are portrait (the Kindle Fire: x 0..2305, y 0..3969) although the framebuffer is landscape.
-            // Its axes then already follow the portrait picture the programs see. Flip bits come from /data/local/tmp/plat_touch.
-            int lx = (int)(u * plat__lw), ly = (int)(v * plat__lh);
-            if (plat__tflip & 1) lx = plat__lw - 1 - lx;
-            if (plat__tflip & 2) ly = plat__lh - 1 - ly;
-            if (plat__tflip & 4) { int t = lx * plat__lh / plat__lw; lx = ly * plat__lw / plat__lh; ly = t; }
-            out[cnt].x = lx; out[cnt].y = ly;
+            // Its axes follow the portrait picture. Flip bits come from /data/local/tmp/plat_touch. In portrait mode (rotation on)
+            // the programs see that picture. In landscape mode the portrait point is turned a quarter turn to match the screen.
+            int pw = (int)plat__sh, ph = (int)plat__sw;                  // the portrait picture: as wide as the screen is tall
+            int lx = (int)(u * pw), ly = (int)(v * ph);
+            if (plat__tflip & 1) lx = pw - 1 - lx;
+            if (plat__tflip & 2) ly = ph - 1 - ly;
+            if (plat__tflip & 4) { int t = lx * ph / pw; lx = ly * pw / ph; ly = t; }
+            if (plat__rot) { out[cnt].x = lx; out[cnt].y = ly; }
+            else { out[cnt].x = ly; out[cnt].y = pw - 1 - lx; }
         } else {
             int px = (int)(u * plat__sw), py = (int)(v * plat__sh);
             if (plat__rot == 1)      { out[cnt].x = plat__lw - 1 - py; out[cnt].y = px; }
