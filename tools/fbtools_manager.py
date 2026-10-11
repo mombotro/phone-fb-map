@@ -402,6 +402,16 @@ def do_repair(dev, plat, log):
     exp = expected_files(plat, app_ids, mtweak(m))
     log("Checking %d files..." % len(exp))
     bad, old = problems_for(dev, plat, m)
+    new_files = [r for _, r, _ in exp]
+    stale = [f for f in m.get("files", []) if f not in new_files]            # files an older version installed, which this one does not use
+    if stale:
+        log("Removing %d file%s from an older version:" % (len(stale), "" if len(stale) == 1 else "s"))
+        for f in stale:
+            log("  remove %s" % f)
+            dev.sh(dev.rmf(f), timeout=20)
+        m["files"] = new_files
+        record_sizes(dev, plat, m)
+        write_manifest(dev, plat, m)
     if bad or old:
         for rel, remote, md, why in bad + old: log("  %s: %s" % (remote, why))
         log("Restoring %d file%s..." % (len(bad) + len(old), "" if len(bad) + len(old) == 1 else "s"))

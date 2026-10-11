@@ -77,10 +77,10 @@ You must sign programs on the phone with `ldid` and the entitlements in `common/
 | Music: sound | Works | Android plays the files with MediaPlayer, through a small Java helper. |
 | Music: player screen | Works | Folders, play, and sound. |
 | Shell | Unknown | |
-| Boot straight into FB Tools | Works | No Exit tile. The picker starts again if it stops. |
+| Boot straight into FB Tools | Works | No Exit tile. The picker starts again if it stops. Tested again after the move to `fbrun`: a restart came up in FB Tools. |
 | Home-screen icon | Unknown | The icon app starts the picker when launched from `adb`. Nobody tapped it yet. |
 | Phone Files (Mac app) | Works | Browse, upload, download, rename, delete, and the protection of system files. Tested with scripts through the app's own API. Not yet tried by hand in the window. |
-| FB Tools manager | Works | Install, change start mode, add and remove apps, repair, and uninstall. Tested with scripts. Not yet tried by hand in the window. |
+| FB Tools manager | Works | Install, change start mode, add and remove apps, repair, uninstall, and the upgrade from the older shell-script install (Repair removes the old files and rewrites the boot hook). Tested with scripts. Not yet tried by hand in the window. |
 
 ## Nexus 4 (LineageOS 14.1, Android 7.1.2)
 
