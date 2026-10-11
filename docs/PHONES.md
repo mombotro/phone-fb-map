@@ -106,6 +106,7 @@ The touch panel has portrait axes, and the code handles that. Set `/data/local/t
 | Multitouch | Works | `ilitek_i2c` panel. |
 | App picker | Works | |
 | Paint, Notes, Timer | Works | |
+| Bible (ASV), momPKT power menu | Works | Book, chapter, and text size. The power menu has Restart and Shut down. |
 | Alarm sound | Works | A looped WAV file, played by the Java helper. |
 | Music: sound | Works | Tested with a test tone. |
 | Home-screen icon | Works | Started from `adb` with `am start`. Nobody tapped it yet. |

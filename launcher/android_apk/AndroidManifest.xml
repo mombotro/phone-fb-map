@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fbtools.launcher" android:versionCode="1" android:versionName="1.0">
-    <application android:label="momOSX" android:icon="@drawable/icon" android:allowBackup="false">
+    <application android:label="momPKT" android:icon="@drawable/icon" android:allowBackup="false">
         <activity android:name=".FBToolsActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay" android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

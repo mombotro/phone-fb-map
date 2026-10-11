@@ -35,3 +35,5 @@ launcher/android_apk/*.idsig
 launcher/android_apk/res/drawable-xhdpi/icon.png
 *.keystore
 common/third_party/
+asv/
+tools/bible_asv.txt

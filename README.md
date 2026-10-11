@@ -23,6 +23,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |
 | `timer` | A stopwatch, a countdown timer, and an alarm clock. The timer and the alarm ring while the program runs. The alarm wakes a blank screen. | iPhone 4, Nexus 4, LG Intuition |
 | `longhouse` | A chat client for the Longhouse family chat. It reads and sends text over the home Wi-Fi, and shows picture thumbnails. Full-size pictures and video are not possible. | iPhone 4, Intuition, Kindle Fire |
+| `bible` | Reads the American Standard Version Bible by book and chapter, with three text sizes. The text is not in this repository. Run `tools/make_bible.py` on an ASV HTML package (the `asv` folder) before `tools/build_payload.sh`, then add the Bible app in Phone Files. | Kindle Fire |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
 | `Phone Files` | A Mac app. It shows the files on a connected iPhone or Android phone. Drag files onto the window to copy them to the phone, and click a file to download it. | Mac to iPhone, Mac to Android |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |
@@ -55,7 +56,7 @@ Install the SpringBoard tweak once on the iPhone. Without it, an iPhone program 
 With it, a program can run as long as it needs. We played a 4-minute song and a 5-minute game.
 
 To start the picker from the phone, run `launcher/install_icon_ios.sh` once. It adds the FB Tools icon to the home screen.
-Tap the icon, then tap a tile. The picker is called momOSX and has a Palm-style look: a dark title bar with the clock, and outlined tiles. The Shut down tile turns the phone off after you confirm. The Exit tile is hidden. To show it, make the file `show_exit` in the data folder. To get the old dark look, put the word `dark` in the file `theme`. On Android, the power button turns the screen off and on.
+Tap the icon, then tap a tile. The picker is called momPKT (mom pocket) and has a Palm-style look: a dark title bar with the clock, and outlined tiles. The Shut down tile turns the phone off after you confirm. The Exit tile shows only when you open the picker from its icon, not when it starts at boot. To get the old dark look, put the word `dark` in the file `theme`. On Android, the power button turns the screen off and on.
 
 The iPhone 5s (iOS 12, jailbroken with Chimera) runs the same programs as arm64 builds. Run `tools/build_ios12.sh`, then `tools/deploy_ios12.sh`.
 The deploy script signs the programs on the phone, because the Mac `ldid` is too old for iOS 12. Run a program with `run_ios12.sh PROGRAM` on the phone.

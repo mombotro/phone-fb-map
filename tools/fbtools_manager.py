@@ -25,6 +25,7 @@ APPS = [
     {"id": "notes", "name": "Notes", "desc": "Notes and to-do lists.", "bin": "notes", "data": ["data/notes"]},
     {"id": "timer", "name": "Timer", "desc": "Stopwatch, countdown timer, and alarm.", "bin": "timer", "data": ["data/timer"]},
     {"id": "music", "name": "Music", "desc": "Play your music.", "bin": "musicplayer", "data": ["music"], "android_extra": ["musichelper.jar"]},
+    {"id": "bible", "name": "Bible", "desc": "The American Standard Version. Read by book and chapter.", "bin": "bible", "data": ["data/bible"], "extra": ["data/bible/asv.txt"]},
     {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts.", "bin": "tic80", "data": ["carts"], "only": ["ios7"]},
     {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
@@ -85,6 +86,7 @@ def app_files(plat, a):
     out = [("bin/" + a["bin"], b + "/" + a["bin"], 0o755)]
     if plat == "android":
         out += [(x, b + "/" + x, 0o644) for x in a.get("android_extra", [])]
+    out += [(x, b + "/" + x, 0o644) for x in a.get("extra", [])]
     return out
 
 
@@ -314,6 +316,7 @@ def copy_files(dev, plat, files, log):
         for rel, remote, mode in files:
             src = pl(plat, rel)
             log("  copy %s" % remote)
+            if rel.startswith("data/"): dev.mkdir(os.path.dirname(remote))
             target = remote + ".new" if plat == "ios12" and is_lib(rel) else remote
             dev.put_file(src, target, mode)
             if plat == "ios12" and (rel.startswith("bin/") or is_lib(rel)):

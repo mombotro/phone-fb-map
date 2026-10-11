@@ -27,13 +27,13 @@ common/fetch_stb_image.sh >/dev/null
 for p in ios7 android; do [ -f build/bearssl/$p/libbearssl.a ] || common/build_bearssl.sh $p >/dev/null; done
 BR=common/third_party/bearssl/inc
 ios fbdemo.c fbdemo
-for t in paint condemo fbshell calib fbreset notes timer; do ios common/$t.c $t; done
+for t in paint condemo fbshell calib fbreset notes timer bible; do ios common/$t.c $t; done
 ios launcher/launcher.c launcher
 LHOUT=$(clang -arch armv7 -O2 -miphoneos-version-min=7.0 -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup -framework CoreFoundation \
         -I common -I $BR -o build/longhouse_ios common/longhouse.c build/bearssl/ios7/libbearssl.a 2>&1) || { printf '%s\n' "$LHOUT" | grep -v '^ld: warning'; echo "BUILD FAILED: longhouse (ios)" >&2; rm -f build/longhouse_ios; exit 1; }
 ldid -Scommon/hid.entitlements.plist build/longhouse_ios
 android android/fbdemo.c fbdemo
-for t in paint condemo fbshell notes timer; do android common/$t.c $t; done
+for t in paint condemo fbshell notes timer bible; do android common/$t.c $t; done
 android launcher/launcher.c launcher
 "$ACC" -O2 -static -fno-pie -fno-emulated-tls -I common -I $BR -o build/longhouse_android common/longhouse.c build/bearssl/android/libbearssl.a -lm || { echo "BUILD FAILED: longhouse (android)" >&2; rm -f build/longhouse_android; exit 1; }
 ls -l build | awk 'NR>1 {print $5, $9}'

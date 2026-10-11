@@ -39,6 +39,7 @@ static const Tool TOOLS[] = {
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
+    { "Bible",     "American Standard",   "+",   0x7A5A3A, BASE "/bible 86400 " BASE "/data/bible/asv.txt", K_RUN },
     { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Calibrate", "fix touch axes",      "+",   0x6E3AA5, BASE "/calib",                 K_RUN },
 #else
@@ -47,6 +48,7 @@ static const Tool TOOLS[] = {
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
+    { "Bible",     "American Standard",   "+",   0x7A5A3A, BASE "/bible 86400 " BASE "/data/bible/asv.txt", K_RUN },
     { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Console",   "text demo",           "Aa",  0xA58A3A, BASE "/condemo 20 2",          K_RUN },
     { "Shut down", "turn the device off", "o|",  0x6A2A2A, "reboot -p",                   K_SHUTDOWN },
@@ -54,9 +56,15 @@ static const Tool TOOLS[] = {
 #ifdef __APPLE__
     { "Shut down", "turn the phone off",  "o|",  0x6A2A2A, "/sbin/halt",                  K_SHUTDOWN },
 #endif
-    { "Exit",      "back to the phone",   "x",   0x883333, NULL,                          K_QUIT },
+    { "Restart",   "back to the phone",   "x",   0x883333, NULL,                          K_QUIT },     // Shut down and Restart sit in the power menu, not in the grid
 };
 #define N_ALL ((int)(sizeof TOOLS / sizeof TOOLS[0]))
+
+// Copy src into dst, cut to `cols` characters with a "~" at the end when it is too long.
+static void fit(char *dst, size_t n, const char *src, int cols) {
+    snprintf(dst, n, "%s", src);
+    if (cols > 0 && (int)strlen(dst) > cols) { dst[cols - 1] = '~'; dst[cols] = 0; }
+}
 
 static double now(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec + tv.tv_usec / 1e6; }
 
@@ -122,21 +130,26 @@ int main(int argc, char **argv) {
     // only show tools whose program is installed (the cart picker always shows, the Exit tile only outside kiosk mode)
     int shown[16], nshown = 0;
     for (int i = 0; i < N_ALL && nshown < 16; i++) {
-        if (TOOLS[i].kind == K_QUIT) { if (!kiosk && (getenv("FB_SHOW_EXIT") || access(BASE "/show_exit", F_OK) == 0)) shown[nshown++] = i; continue; }       // shut down is the way out; Exit only if asked for
+        if (TOOLS[i].kind == K_QUIT || TOOLS[i].kind == K_SHUTDOWN) continue;      // these two are in the power menu
         if (kiosk && strstr(TOOLS[i].cmd, "/calib")) continue;               // a bad calibration would lock the user out
         char buf[512]; snprintf(buf, sizeof buf, "%s", TOOLS[i].cmd);
         char *sp = strchr(buf, ' '); if (sp) *sp = 0;
-        if (TOOLS[i].kind == K_SHUTDOWN || access(buf, X_OK) == 0) shown[nshown++] = i;     // the shut-down command is a system command, not one of our files
+        if (access(buf, X_OK) == 0) shown[nshown++] = i;
     }
 
-    const int GAP = 20, COLS = 2, HDR = 130;
-    const int tile_w = (W - (COLS + 1) * GAP) / COLS;
+    const int GAP = 20, HDR = 130;
+    const int COLS = nshown <= 8 ? 2 : nshown <= 15 ? 3 : 4;                    // more apps: more columns, so the tiles shrink
+    const int TG = COLS > 2 ? 12 : GAP;                                         // the gap between tiles
+    const int tile_w = (W - (COLS + 1) * TG) / COLS;
     const int rows = (nshown + COLS - 1) / COLS;
-    int tile_h = (H - HDR - GAP * (rows + 1)) / (rows ? rows : 1);
+    int tile_h = (H - HDR - TG * (rows + 1)) / (rows ? rows : 1);
     if (tile_h > 210) tile_h = 210;
 
     enum { S_MAIN, S_CARTS, S_SHUT } state = S_MAIN;
-    int scroll = 0, dirty = 3, pressed = -1;
+    int scroll = 0, dirty = 3, pressed = -1, menu = 0;
+    const int PW_X = W - GAP - 126 - 76, PW_Y = 14, PW = 64;                    // the power button in the title bar, next to the time
+    const int MENU_W = W - 2 * GAP < 380 ? W - 2 * GAP : 380, MENU_X = W - GAP - MENU_W, MENU_Y = 92, MENU_ROW = 90;
+    const int menu_rows = kiosk ? 1 : 2;                                         // Restart ends the picker, so it is not offered at boot
     double t0 = now();
 
     int prev = 0, down_x = 0, down_y = 0, last_y = 0, moved = 0;
@@ -161,9 +174,18 @@ int main(int argc, char **argv) {
         prev = cur;
 
         int quit = 0;
-        if (tap && state == S_MAIN) {
+        if (tap && state == S_MAIN && menu) {
+            if (tx >= MENU_X && tx < MENU_X + MENU_W && ty >= MENU_Y && ty < MENU_Y + menu_rows * MENU_ROW) {
+                int row = (ty - MENU_Y) / MENU_ROW;
+                if (!kiosk && row == 0) quit = 1;                               // Restart
+                else state = S_SHUT;                                            // Shut down asks again on its own screen
+            }
+            menu = 0; dirty = 3;
+        } else if (tap && state == S_MAIN && tx >= PW_X - 8 && tx < PW_X + PW + 8 && ty < MENU_Y) {
+            menu = 1; dirty = 3;
+        } else if (tap && state == S_MAIN) {
             for (int k = 0; k < nshown; k++) {
-                int x = GAP + (k % COLS) * (tile_w + GAP), y = HDR + GAP + (k / COLS) * (tile_h + GAP);
+                int x = TG + (k % COLS) * (tile_w + TG), y = HDR + TG + (k / COLS) * (tile_h + TG);
                 if (tx < x || tx >= x + tile_w || ty < y || ty >= y + tile_h) continue;
                 const Tool *t = &TOOLS[shown[k]];
                 if (t->kind == K_QUIT) quit = 1;
@@ -213,27 +235,41 @@ int main(int argc, char **argv) {
             if (state == S_MAIN) {
                 // title bar (ink) with the name and the time, like a palmtop; with the theme off it is the old dark header
                 draw_rect(&s, 0, 0, W, 92, 0x26303E);
-                draw_text(&s, GAP + 6, 26, 5, "momOSX", 0xFFFFFF);
+                draw_text(&s, GAP + 6, 26, 5, "momPKT", 0xFFFFFF);
                 { time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); char clock[8]; strftime(clock, sizeof clock, "%H:%M", &lt);
                   draw_text(&s, W - GAP - 5 * 8 * 3 - 6, 30, 3, clock, 0xFFFFFF); }
+                { static const char *POWER[12] = { ".....##.....", ".....##.....", "..#..##..#..", ".##..##..##.", "##...##...##", "##...##...##",
+                                                   "##........##", "##........##", ".##......##.", "..##....##..", "...######...", "............" };
+                  uint32_t ink = s.theme ? 0x000000 : 0xFFFFFF;                  // in the palm look the bar is dark ink, so the icon is paper
+                  if (menu) { draw_rect(&s, PW_X, PW_Y, PW, PW, ink); ink = s.theme ? 0xFFFFFF : 0x26303E; }
+                  for (int r = 0; r < 12; r++) for (int c = 0; c < 12; c++) if (POWER[r][c] == '#') draw_rect(&s, PW_X + 8 + c * 4, PW_Y + 8 + r * 4, 4, 4, ink); }
                 for (int k = 0; k < nshown; k++) {
                     const Tool *t = &TOOLS[shown[k]];
-                    int x = GAP + (k % COLS) * (tile_w + GAP), y = HDR + GAP + (k / COLS) * (tile_h + GAP);
+                    int x = TG + (k % COLS) * (tile_w + TG), y = HDR + TG + (k / COLS) * (tile_h + TG);
                     int down = cur && pressed == -2 && down_x >= x && down_x < x + tile_w && down_y >= y && down_y < y + tile_h;
                     int gl = (int)strlen(t->glyph), ll = (int)strlen(t->label), sl = (int)strlen(t->sub);
-                    if (s.theme) {                                           // an outlined tile: icon, then the name, then a small line
-                        draw_rect(&s, x, y, tile_w, tile_h, 0xFFFFFF);
-                        draw_rect(&s, x + 4, y + 4, tile_w - 8, tile_h - 8, down ? 0xFFFFFF : 0x000000);
-                        draw_text(&s, x + (tile_w - gl * 8 * 6) / 2, y + 16, 6, t->glyph, 0xFFFFFF);
-                        draw_text(&s, x + (tile_w - ll * 8 * 3) / 2, y + tile_h - 74, 3, t->label, 0xFFFFFF);
-                        draw_text(&s, x + (tile_w - sl * 8) / 2, y + tile_h - 28, 1, t->sub, 0x8899AA);
-                    } else {
-                        draw_rect(&s, x, y, tile_w, tile_h, t->color);
-                        draw_rect(&s, x, y + tile_h - 6, tile_w, 6, 0x000000);
-                        draw_text(&s, x + 20, y + 18, 5, t->glyph, 0xFFFFFF);
-                        draw_text(&s, x + 20, y + tile_h - 78, 3, t->label, 0xFFFFFF);
-                        draw_text(&s, x + 20, y + tile_h - 30, 1, t->sub, 0xDDDDDD);
-                        if (down) { draw_rect(&s, x, y, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y + tile_h - 8, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y, 8, tile_h, 0xFFFFFF); draw_rect(&s, x + tile_w - 8, y, 8, tile_h, 0xFFFFFF); }
+                    // the glyph, name and small line shrink to fit the tile, so a full screen of apps still reads
+                    int gs = 6; while (gs > 1 && (gl * 8 * gs > tile_w - 16 || 16 * gs > tile_h * 45 / 100)) gs--;
+                    int ls = 3; while (ls > 1 && (ll * 8 * ls > tile_w - 12 || 16 * ls > tile_h * 28 / 100)) ls--;
+                    int show_sub = tile_h >= 150, lcols = (tile_w - 12) / (8 * ls), scols = (tile_w - 12) / 8;
+                    char lab[40], sub[64]; fit(lab, sizeof lab, t->label, lcols); fit(sub, sizeof sub, t->sub, scols);
+                    int total = 16 * gs + 10 + 16 * ls + (show_sub ? 14 : 0), ty0 = y + (tile_h - total) / 2;
+                    uint32_t edge = s.theme ? 0xFFFFFF : t->color;
+                    draw_rect(&s, x, y, tile_w, tile_h, edge);                  // themed: an ink outline, paper inside (inverted while pressed)
+                    if (s.theme) draw_rect(&s, x + 4, y + 4, tile_w - 8, tile_h - 8, down ? 0xFFFFFF : 0x000000);
+                    else { draw_rect(&s, x, y + tile_h - 6, tile_w, 6, 0x000000); if (down) { draw_rect(&s, x, y, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y + tile_h - 8, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y, 8, tile_h, 0xFFFFFF); draw_rect(&s, x + tile_w - 8, y, 8, tile_h, 0xFFFFFF); } }
+                    draw_text(&s, x + (tile_w - gl * 8 * gs) / 2, ty0, gs, t->glyph, 0xFFFFFF);
+                    draw_text(&s, x + (tile_w - (int)strlen(lab) * 8 * ls) / 2, ty0 + 16 * gs + 10, ls, lab, 0xFFFFFF);
+                    if (show_sub) draw_text(&s, x + (tile_w - (int)strlen(sub) * 8) / 2, ty0 + 16 * gs + 10 + 16 * ls + 6, 1, sub, s.theme ? 0x8899AA : 0xDDDDDD);
+                    (void)sl;
+                }
+                if (menu) {                                                      // the drop-down: which one?
+                    draw_rect(&s, MENU_X, MENU_Y, MENU_W, menu_rows * MENU_ROW + 8, s.theme ? 0xFFFFFF : 0x9AAABB);
+                    draw_rect(&s, MENU_X + 4, MENU_Y + 4, MENU_W - 8, menu_rows * MENU_ROW, s.theme ? 0x000000 : 0x202C3C);
+                    for (int r = 0; r < menu_rows; r++) {
+                        const char *name = (!kiosk && r == 0) ? "Restart" : "Shut down";
+                        if (r) draw_rect(&s, MENU_X + 4, MENU_Y + 4 + r * MENU_ROW - 2, MENU_W - 8, 4, s.theme ? 0xFFFFFF : 0x9AAABB);
+                        draw_text(&s, MENU_X + 24, MENU_Y + 4 + r * MENU_ROW + (MENU_ROW - 48) / 2, 3, name, 0xFFFFFF);
                     }
                 }
             } else if (state == S_SHUT) {
