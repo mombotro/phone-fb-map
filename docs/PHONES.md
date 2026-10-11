@@ -73,7 +73,7 @@ You must sign programs on the phone with `ldid` and the entitlements in `common/
 | Paint | Works | |
 | App picker | Works | |
 | Notes and to-do lists | Works | `rename()` fails on Android 4.1 with this toolkit. The code calls the kernel directly. |
-| Timer and stopwatch | Unknown | The alarm sound now plays through the Java helper (worked on the Kindle Fire, not tried here). The alarm cannot wake a blank screen. |
+| Timer, stopwatch, alarm | Works | The alarm sound plays through the Java helper. The alarm cannot wake a blank screen. |
 | Music: sound | Works | Android plays the files with MediaPlayer, through a small Java helper. |
 | Music: player screen | Works | Folders, play, and sound. |
 | Shell | Unknown | |
