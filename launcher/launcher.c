@@ -184,7 +184,10 @@ int main(int argc, char **argv) {
     const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = H < 700 ? 62 : 84, sp_rows = kiosk ? 6 : 7;
     const int SL_X0 = SP_X + 190, SL_X1 = SP_X + SP_W - 112;                      // the slider tracks
 #endif
-    double bat_until = 0;                                                       // while set, a box shows the exact battery percentage
+    double bat_until = 0;
+#ifndef __APPLE__
+    double next_sync = 0; plat_time_forget();                                  // ask a time server again after every start
+#endif                                                       // while set, a box shows the exact battery percentage
     const int BAT_X = W - GAP - 126 - 70, PW_X = BAT_X - 76, PW_Y = 14, PW = 64;                    // the power button in the title bar, next to the time
     const int MENU_W = W - 2 * GAP < 380 ? W - 2 * GAP : 380, MENU_X = W - GAP - MENU_W, MENU_Y = 92, MENU_ROW = 90;
     const int menu_rows = kiosk ? 1 : 2;                                         // Restart ends the picker, so it is not offered at boot
@@ -311,6 +314,12 @@ int main(int argc, char **argv) {
         }
 
         if (bat_until && now() > bat_until) { bat_until = 0; dirty = 3; }
+#ifndef __APPLE__
+        if (now() > next_sync) {                                              // keep the clock right: retry every 20 seconds until a time server answers, then each half hour
+            plat_time_sync_async(); plat_timezone_refresh(); dirty = 3;
+            next_sync = now() + (plat_time_is_synced() ? 1800 : 20);
+        }
+#endif
         { static int last_min = -1; time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); if (lt.tm_min != last_min) { last_min = lt.tm_min; dirty = 3; } }
         if (dirty > 0) {
             int stride; uint32_t *px = plat_begin(&stride);

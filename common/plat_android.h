@@ -4,10 +4,16 @@
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <linux/input.h>
+#include <linux/rtc.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -281,6 +287,55 @@ static void plat_orientation_set(int landscape) {
     fprintf(f, "%d\n", rot); fclose(f); chmod("/data/local/tmp/plat_rotate", 0666);
 }
 
+// ---- the clock. With Android stopped nothing sets the time from the network, and the phone's battery clock can be far off (the Kindle
+// said the year 2000, the Intuition said January 2025). So the picker asks a public time server (NTP, over UDP, by number because the
+// phone has no name lookup here), sets the system clock and the hardware clock, and records success in a file.
+#define PLAT_TIME_OK "/data/local/tmp/time_ok"
+static int plat__ntp_once(const char *ip) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0); if (fd < 0) return -1;
+    struct timeval to = { 2, 0 }; setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof to);
+    struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons(123); a.sin_addr.s_addr = inet_addr(ip);
+    unsigned char pk[48]; memset(pk, 0, sizeof pk); pk[0] = 0x1B;                // version 3, client
+    int rc = -1;
+    if (sendto(fd, pk, sizeof pk, 0, (struct sockaddr *)&a, sizeof a) == (ssize_t)sizeof pk) {
+        unsigned char rp[48];
+        if (recv(fd, rp, sizeof rp, 0) == (ssize_t)sizeof rp) {
+            unsigned long long secs = ((unsigned long long)rp[40] << 24) | (rp[41] << 16) | (rp[42] << 8) | rp[43];
+            unsigned frac = ((unsigned)rp[44] << 24) | (rp[45] << 16) | (rp[46] << 8) | rp[47];
+            long long unixs = (long long)secs - 2208988800LL;
+            if (unixs > 1700000000LL) {                                          // a sane answer (after 2023)
+                struct timeval now; gettimeofday(&now, NULL);
+                long long diff = unixs - now.tv_sec; if (diff < 0) diff = -diff;
+                if (diff > 2) {
+                    struct timeval tv; tv.tv_sec = (time_t)unixs; tv.tv_usec = (suseconds_t)(((unsigned long long)frac * 1000000ULL) >> 32);
+                    settimeofday(&tv, NULL);
+                    int rt = open("/dev/rtc0", O_RDWR);                          // the battery clock, so a restart keeps the time
+                    if (rt >= 0) { struct tm g; time_t t = (time_t)unixs; gmtime_r(&t, &g);
+                        struct rtc_time r; memset(&r, 0, sizeof r); r.tm_sec = g.tm_sec; r.tm_min = g.tm_min; r.tm_hour = g.tm_hour; r.tm_mday = g.tm_mday;
+                        r.tm_mon = g.tm_mon; r.tm_year = g.tm_year; ioctl(rt, RTC_SET_TIME, &r); close(rt); }
+                }
+                rc = 0;
+            }
+        }
+    }
+    close(fd); return rc;
+}
+// Try a few servers. Writes PLAT_TIME_OK when one answered.
+static void plat__time_sync_now(void) {
+    static const char *servers[] = { "216.239.35.0", "129.6.15.28", "162.159.200.1", "132.163.97.1", NULL };
+    for (int i = 0; servers[i]; i++) if (plat__ntp_once(servers[i]) == 0) { FILE *f = fopen(PLAT_TIME_OK, "w"); if (f) { fputs("ok\n", f); fclose(f); } return; }
+}
+// Run the sync in a separate process that is not our child, so the caller's waitpid() calls are not disturbed.
+static void plat_time_sync_async(void) {
+    pid_t p = fork();
+    if (p < 0) return;
+    if (p == 0) { if (fork() == 0) { setsid(); plat__time_sync_now(); } _exit(0); }
+    int st; waitpid(p, &st, 0);
+}
+static int plat_time_is_synced(void) { return access(PLAT_TIME_OK, F_OK) == 0; }
+static void plat_time_forget(void) { unlink(PLAT_TIME_OK); }
+static void plat_timezone_refresh(void);
+
 // A static binary has no Android time zone. Ask the phone's own date command for the offset (like -0500) and use it.
 static void plat__timezone(void) {
     if (getenv("TZ")) return;
@@ -291,6 +346,7 @@ static void plat__timezone(void) {
     char tz[24]; snprintf(tz, sizeof tz, "UTC%c%02d:%02d", b[0] == '+' ? '-' : '+', h, m);   // POSIX sign is reversed
     setenv("TZ", tz, 1); tzset();
 }
+static void plat_timezone_refresh(void) { unsetenv("TZ"); plat__timezone(); }       // the offset changes with the date (summer time)
 static int plat__theme_setting(void) {                      // palm (the default) or dark
     const char *e = getenv("FB_THEME"); char b[16] = "";
     if (!e) { FILE *f = fopen("/data/local/tmp/theme", "r"); if (f) { if (fscanf(f, "%15s", b) == 1) e = b; fclose(f); } }
