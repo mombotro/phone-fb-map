@@ -71,7 +71,7 @@ It uses SSH for iPhones and `adb` for Android phones.
 It only deletes, renames, or overwrites your own files: notes, music, carts, and app data. System files and the programs on the phone are locked. A lock icon marks them.
 
 The FB Tools tab in Phone Files installs FB Tools on a phone, and removes it again. It also does these jobs:
-- Choose how FB Tools starts: boot straight into it (no way out except Shut down), an icon on the home screen, or nothing.
+- Choose how FB Tools starts: boot straight into it (no Restart in the menu, but the icon stays as a backup), an icon on the home screen only, or nothing.
 - Add or remove one app at a time. Notes, music, and carts stay when you remove an app.
 - Repair a broken install. It checks each file against the copy in the app, and restores any that are missing or changed.
 

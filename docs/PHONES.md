@@ -77,7 +77,7 @@ You must sign programs on the phone with `ldid` and the entitlements in `common/
 | Music: sound | Works | Android plays the files with MediaPlayer, through a small Java helper. |
 | Music: player screen | Works | Folders, play, and sound. |
 | Shell | Unknown | |
-| Boot straight into FB Tools | Works | No Exit tile. The picker starts again if it stops. Tested again after the move to `fbrun`: a restart came up in FB Tools. |
+| Boot straight into FB Tools | Works | No Restart in the menu. The icon stays as a backup. The picker starts again if it stops. Tested again after the move to `fbrun`: a restart came up in FB Tools. |
 | Home-screen icon | Unknown | The icon app starts the picker when launched from `adb`. Nobody tapped it yet. |
 | Longhouse chat | Works | Reads and sends text over the home Wi-Fi, and shows picture thumbnails (HTTPS and WebSocket to the signaling server, with BearSSL). Full-size pictures and video are not possible. |
 | Phone Files (Mac app) | Works | Browse, upload, download, rename, delete, and the protection of system files. Tested with scripts through the app's own API. Not yet tried by hand in the window. |

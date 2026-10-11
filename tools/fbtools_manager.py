@@ -247,12 +247,13 @@ def apply_mode(dev, plat, mode, log):
         android_up(dev, log)
         hook = "No such file" not in dev.sh("ls %s" % ANDROID_HOOK, timeout=15).stdout.decode()
         if mode == "boot":
-            log("Setting FB Tools to start at boot (no Exit tile)...")
+            log("Setting FB Tools to start at boot (no Restart in the menu), and keeping the icon as a backup...")
             dev.put_text("/data/local/tmp/fbboot_hook.sh", ANDROID_HOOK_TEXT, 0o755)
             dev.sh("%s; mount -o remount,rw /system; cat /data/local/tmp/fbboot_hook.sh > %s; chmod 755 %s; mount -o remount,ro /system"
                    % (dev.rmf(b + "/fbboot_off"), ANDROID_HOOK, ANDROID_HOOK), timeout=60)
             if dev.get_text(ANDROID_HOOK) is None: raise FBToolsError("could not write the boot hook in /system")
-            dev.adb("uninstall", APK_PACKAGE, timeout=60)
+            r = dev.adb("install", "-r", pl("android", "FBTools.apk"), timeout=180)          # the icon stays, in case the boot start fails
+            if b"Success" not in r.stdout: raise FBToolsError("icon install failed: " + (r.stdout + r.stderr).decode(errors="replace").strip()[-200:])
         else:
             if hook:
                 log("Removing the boot hook...")
