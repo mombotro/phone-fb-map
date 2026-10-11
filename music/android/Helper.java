@@ -1,7 +1,7 @@
 // Helper.java - audio engine for the Android music player. Runs under app_process (no zygote needed) and plays files with
 // the platform MediaPlayer, so every format the phone can decode works and the audio goes to the right output.
 // The C player starts it and talks over stdin/stdout, one text line per message.
-//   in:  play PATH | pause | resume | seek MS | vol 0-100 | stop | quit
+//   in:  play PATH | loop PATH | pause | resume | seek MS | vol 0-100 | stop | quit
 //   out: state playing|paused|stopped|ended|error TEXT      pos MS DURATION_MS
 import android.media.AudioManager;
 import android.media.MediaPlayer;
@@ -25,13 +25,16 @@ public class Helper {
         prepared = false; started = false;
     }
 
-    static void play(String path) {
+    static void play(String path) { play(path, false); }
+
+    static void play(String path, boolean loop) {
         release();
         try {
             mp = new MediaPlayer();
             mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
             mp.setVolume(vol, vol);
             mp.setDataSource(path);
+            mp.setLooping(loop);
             mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 public void onPrepared(MediaPlayer m) { prepared = true; m.start(); started = true; say("state playing"); }
             });
@@ -52,6 +55,7 @@ public class Helper {
         String c = p[0];
         try {
             if (c.equals("play") && p.length > 1) play(p[1]);
+            else if (c.equals("loop") && p.length > 1) play(p[1], true);
             else if (c.equals("pause") && mp != null && prepared) { mp.pause(); say("state paused"); }
             else if (c.equals("resume") && mp != null && prepared) { mp.start(); say("state playing"); }
             else if (c.equals("seek") && mp != null && prepared) mp.seekTo(Integer.parseInt(p[1].trim()));

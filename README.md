@@ -1,7 +1,7 @@
 # Old-phone framebuffer
 
 This project draws pixels straight to the screen of old phones. It does not use the normal graphics stack.
-It runs on a jailbroken iPhone 4 (iOS 7.1.2), an iPhone 5s (iOS 12.5.7), a Nexus 4 (LineageOS 14.1, Android 7.1.2), and an LG Intuition (Android 4.1.2).
+It runs on a jailbroken iPhone 4 (iOS 7.1.2), an iPhone 5s (iOS 12.5.7), a Kindle Fire (Android 2.3), a Nexus 4 (LineageOS 14.1, Android 7.1.2), and an LG Intuition (Android 4.1.2).
 
 On top of the display code, the project has multitouch input, a text console, an on-screen keyboard, a shell, a TIC-80 player with sound, and a music player.
 One small platform layer hides the differences between the devices. On the iPhone, a small SpringBoard tweak lets a program own the screen for as long as it needs.
@@ -48,7 +48,7 @@ Each iPhone program runs from a launch script, and each Android program runs fro
 Use the script. Do not run a program by hand while the system UI is stopped.
 
 - iPhone 4: `common/run_shell_ios.sh`, `tic80/run_tic80_ios.sh`, and `music/run_music_ios.sh`
-- Android: `common/run_launcher.sh [seconds] [program]` (the picker by default), `common/run_paint.sh`, `common/run_shell.sh`, and `common/run_console.sh`
+- Android: `fbrun [-d] [-k] [-b] [seconds] [program]` (the picker by default; see `launcher/fbrun.c`), `common/run_paint.sh`, `common/run_shell.sh`, and `common/run_console.sh`
 
 Install the SpringBoard tweak once on the iPhone. Without it, an iPhone program can own the screen for only about 110 seconds.
 With it, a program can run as long as it needs. We played a 4-minute song and a 5-minute game.

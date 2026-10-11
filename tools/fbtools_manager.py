@@ -17,7 +17,7 @@ PAYLOAD = os.path.join(HERE, "payload")
 MANIFEST = ".fbtools.json"
 APK_PACKAGE = "com.fbtools.launcher"
 ANDROID_HOOK = "/system/etc/install-recovery-2.sh"
-ANDROID_HOOK_TEXT = "#!/system/bin/sh\n# FB Tools: start the app picker at boot\nsh /data/local/tmp/run_boot.sh > /dev/null 2>&1 &\n"
+ANDROID_HOOK_TEXT = "#!/system/bin/sh\n# FB Tools: start the app picker at boot (fbrun detaches itself)\n/data/local/tmp/fbrun -d -k -b 31536000 fblauncher\n"
 
 APPS = [
     {"id": "paint", "name": "Paint", "desc": "Draw with your fingers.", "bin": "paint"},
@@ -64,7 +64,7 @@ def app_available(plat, a):
     return os.path.exists(pl(plat, "bin/" + a["bin"]))
 
 
-def core_files(plat):
+def core_files(plat, tweak=True):
     """(payload relative path, remote path, mode)"""
     b = PLATFORMS[plat]["base"]
     if plat == "ios7":
@@ -74,9 +74,9 @@ def core_files(plat):
                 ("FBMode.plist", "/Library/MobileSubstrate/DynamicLibraries/FBMode.plist", 0o644)]
     if plat == "ios12":
         return [("bin/fblauncher", b + "/fblauncher", 0o755), ("bin/fbreset", b + "/fbreset", 0o755),
-                ("run_ios12.sh", b + "/run_ios12.sh", 0o755), ("ios12.entitlements.plist", b + "/ios12.ent", 0o644)]
-    return [("bin/fblauncher", b + "/fblauncher", 0o755), ("bin/fbstart", b + "/fbstart", 0o755), ("bin/fbls", b + "/fbls", 0o755),
-            ("run_launcher.sh", b + "/run_launcher.sh", 0o755), ("run_boot.sh", b + "/run_boot.sh", 0o755)]
+                ("run_ios12.sh", b + "/run_ios12.sh", 0o755), ("ios12.entitlements.plist", b + "/ios12.ent", 0o644)] + \
+               ([("lib/FBMode12.dylib", "/usr/lib/FBMode12.dylib", 0o755), ("lib/TweakInject.dylib", "/usr/lib/TweakInject.dylib", 0o755)] if tweak else [])
+    return [("bin/fblauncher", b + "/fblauncher", 0o755), ("bin/fbrun", b + "/fbrun", 0o755), ("bin/fbls", b + "/fbls", 0o755)]
 
 
 def app_files(plat, a):
@@ -87,8 +87,8 @@ def app_files(plat, a):
     return out
 
 
-def expected_files(plat, app_ids):
-    files = list(core_files(plat))
+def expected_files(plat, app_ids, tweak=True):
+    files = list(core_files(plat, tweak))
     for a in apps_for(plat):
         if a["id"] in app_ids: files += app_files(plat, a)
     return files
@@ -153,6 +153,10 @@ def remote_sizes(dev, plat, paths):
     return out
 
 
+def mtweak(m):
+    return m.get("tweak", True)
+
+
 def record_sizes(dev, plat, m):
     """Remember, in the manifest, the size of each installed file on the phone (after signing, which adds bytes on iOS 12)
     and the size of the copy in this app. Status and repair compare against these, so they notice damage and also
@@ -160,7 +164,7 @@ def record_sizes(dev, plat, m):
     files = m.get("files", [])
     remote = remote_sizes(dev, plat, files)
     local = {}
-    for rel, rem, _ in expected_files(plat, m.get("apps", [])):
+    for rel, rem, _ in expected_files(plat, m.get("apps", []), mtweak(m)):
         src = pl(plat, rel)
         if os.path.exists(src): local[rem] = os.path.getsize(src)
     m["sizes"] = {f: remote[f] for f in files if f in remote}
@@ -169,7 +173,7 @@ def record_sizes(dev, plat, m):
 
 def problems_for(dev, plat, m):
     """(missing_or_changed, outdated) lists of (rel, remote, mode) for an installed phone."""
-    exp = expected_files(plat, m.get("apps", []))
+    exp = expected_files(plat, m.get("apps", []), mtweak(m))
     have = remote_sizes(dev, plat, [r for _, r, _ in exp])
     want, pwant = m.get("sizes", {}), m.get("psizes", {})
     bad, old = [], []
@@ -177,6 +181,8 @@ def problems_for(dev, plat, m):
         src = pl(plat, rel)
         if not os.path.exists(src): continue
         h = have.get(remote)
+        if remote not in set(m.get("files", [])):                      # a file this version needs, but the manifest never listed
+            bad.append((rel, remote, md, "not recorded in the manifest")); continue
         if plat == "ios12" and not want:        # signing changes the size, and no size was recorded: nothing can be trusted
             bad.append((rel, remote, md, "not verified (no size record)")); continue
         if h is None: bad.append((rel, remote, md, "missing"))
@@ -210,6 +216,16 @@ def ios_respring(dev, log):
     dev.sh("killall -9 SpringBoard", timeout=20)
 
 
+def foreign_loader(dev, plat):
+    """True if /usr/lib/TweakInject.dylib exists on an iOS 12 phone and is NOT ours. We never overwrite someone else's loader.
+    Ours contains the text FBMode12.dylib. If we cannot tell, we treat the loader as someone else's (the safe answer)."""
+    if plat != "ios12": return False
+    r = dev.sh("if [ -f /usr/lib/TweakInject.dylib ]; then grep -c FBMode12.dylib /usr/lib/TweakInject.dylib; else echo MISSING; fi", timeout=20).stdout.decode().strip()
+    if r == "MISSING": return False
+    try: return int(r.split()[0]) == 0
+    except (ValueError, IndexError): return True
+
+
 # ---------------------------------------------------------------- start modes
 
 def apply_mode(dev, plat, mode, log):
@@ -218,7 +234,7 @@ def apply_mode(dev, plat, mode, log):
     b = PLATFORMS[plat]["base"]
     if plat == "android":
         android_up(dev, log)
-        hook = dev.sh("[ -f %s ] && echo y" % ANDROID_HOOK, timeout=15).stdout.decode().strip().startswith("y")
+        hook = "No such file" not in dev.sh("ls %s" % ANDROID_HOOK, timeout=15).stdout.decode()
         if mode == "boot":
             log("Setting FB Tools to start at boot (no Exit tile)...")
             dev.put_text("/data/local/tmp/fbboot_hook.sh", ANDROID_HOOK_TEXT, 0o755)
@@ -267,18 +283,41 @@ def apply_mode(dev, plat, mode, log):
 
 # ---------------------------------------------------------------- actions
 
+SELF_HEAL = ("( zsh -c 'zmodload zsh/files; zmodload zsh/zselect; zselect -t 9000; rm -f /usr/lib/TweakInject.dylib /usr/lib/TweakInject.dylib.new; "
+             ": > /var/root/.disable_fbmode' >/dev/null 2>&1 & )")
+
+
 def copy_files(dev, plat, files, log):
+    """Copy the files to the phone. On iOS 12 the programs and libraries are signed on the phone (the Mac ldid is too old).
+    SAFETY: /usr/lib/TweakInject.dylib is loaded by Chimera into EVERY new process. A copy that is not signed yet would
+    break every new process, SSH included. So a library is always written to a name that is never loaded (.new), signed
+    there, and only then renamed into place. A shell timer that uses only built-in commands deletes the loader after
+    90 seconds if something goes wrong, and it is cancelled when the copy has worked."""
+    base = PLATFORMS[plat]["base"]
     for rel, remote, mode in files:
-        src = pl(plat, rel)
-        if not os.path.exists(src):
+        if not os.path.exists(pl(plat, rel)):
             raise FBToolsError("missing in the payload: %s. Run tools/build_payload.sh and rebuild the app." % rel)
-        log("  copy %s" % remote)
-        dev.put_file(src, remote, mode)
-    if plat == "ios12":                     # sign on the phone, after the entitlements file is there (the Mac ldid is too old)
+    is_lib = lambda rel: rel.startswith("lib/")
+    risky = plat == "ios12" and any(is_lib(rel) for rel, _, _ in files)
+    if risky:
+        dev.sh(SELF_HEAL, timeout=20)
+    try:
         for rel, remote, mode in files:
-            if rel.startswith("bin/"):
-                r = dev.sh("ldid -S%s/ios12.ent %s" % (PLATFORMS[plat]["base"], remote), timeout=30)
+            src = pl(plat, rel)
+            log("  copy %s" % remote)
+            target = remote + ".new" if plat == "ios12" and is_lib(rel) else remote
+            dev.put_file(src, target, mode)
+            if plat == "ios12" and (rel.startswith("bin/") or is_lib(rel)):
+                r = dev.sh("ldid -S%s/ios12.ent %s" % (base, target), timeout=30)
                 if r.returncode: raise FBToolsError("signing %s failed: %s" % (remote, r.stderr.decode(errors="replace").strip()))
+            if target != remote:
+                dev.sh("mv %s %s" % (target, remote), timeout=20)
+        if risky:
+            ok = dev.sh("echo ok", timeout=20).stdout.decode().strip() == "ok"          # a new process still works
+            if not ok: raise FBToolsError("the phone does not start new programs after the copy")
+    finally:
+        if risky:                                                                       # cancel the timer
+            dev.sh("for p in $(ps -A -o pid,command | grep 'zmodload zsh/files' | grep -v grep | cut -c1-6); do kill $p; done", timeout=20)
 
 
 def data_dirs(plat, app_ids):
@@ -291,17 +330,26 @@ def do_install(dev, plat, mode, app_ids, log):
     if plat == "android":
         if not dev.root: raise FBToolsError("This Android phone has no root. FB Tools needs root.")
         android_up(dev, log)
+    tweak = True
+    if foreign_loader(dev, plat):
+        tweak = False
+        log("Another tweak loader is installed on this phone. FB Tools will not replace it.")
+        log("FB Tools still works, but each run lasts only about 2 minutes (SpringBoard is frozen).")
     log("Copying the FB Tools programs...")
-    copy_files(dev, plat, expected_files(plat, app_ids), log)
+    exp = expected_files(plat, app_ids, tweak)
+    copy_files(dev, plat, exp, log)
     for d in data_dirs(plat, app_ids):
         dev.sh("mkdir -p %s; chmod 777 %s" % (d, d), timeout=20)
-    files = {remote: None for _, remote, _ in expected_files(plat, app_ids)}
-    write_manifest(dev, plat, {"version": 1, "platform": plat, "apps": app_ids, "mode": "none", "files": list(files)})
+    files = {remote: None for _, remote, _ in exp}
+    write_manifest(dev, plat, {"version": 1, "platform": plat, "apps": app_ids, "mode": "none", "files": list(files), "tweak": tweak})
     apply_mode(dev, plat, mode, log)
     m = read_manifest(dev, plat) or {}
-    m.update({"version": 1, "platform": plat, "apps": app_ids, "mode": mode, "files": list(files)})
+    m.update({"version": 1, "platform": plat, "apps": app_ids, "mode": mode, "files": list(files), "tweak": tweak})
     record_sizes(dev, plat, m)
     write_manifest(dev, plat, m)
+    if plat == "ios12" and tweak:
+        log("Restarting SpringBoard (the home screen) so the FB Tools tweak loads...")
+        dev.sh("rm -f /var/root/.disable_fbmode; killall -9 SpringBoard", timeout=30)
     if mode == "boot":
         log("FB Tools starts at the next boot. Use 'Start now' to start it without a restart.")
     elif mode == "home":
@@ -321,15 +369,17 @@ def do_uninstall(dev, plat, remove_data, log):
     elif plat == "ios12":
         log("Removing the icon...")
         dev.sh("for n in fblauncher paint musicplayer fbshell calib notes timer; do killall $n >/dev/null 2>&1; done; rm -rf /Applications/FBTools.app; uicache -a", timeout=90)
+        if m.get("tweak", True):
+            log("Removing the FB Tools tweak and its loader, then restarting SpringBoard...")
     else:
         log("Removing the boot hook and the icon...")
-        dev.sh("echo off > %s/fbboot_off; mount -o remount,rw /system; [ -f %s ] && rm %s; mount -o remount,ro /system" % (b, ANDROID_HOOK, ANDROID_HOOK), timeout=60)
+        dev.sh("echo off > %s/fbboot_off; mount -o remount,rw /system; rm %s; mount -o remount,ro /system" % (b, ANDROID_HOOK), timeout=60)
         dev.adb("uninstall", APK_PACKAGE, timeout=60)
     files = m.get("files") or [r for _, r, _ in expected_files(plat, [a["id"] for a in apps_for(plat)])]
     log("Removing %d program files..." % len(files))
     for f in files:
         dev.sh(dev.rmf(f), timeout=20)
-    for f in (".fbtools.json", "kiosk.log", "kiosk.boot.log", "kiosk.pid", "fbboot_off", "boot.log", "fblauncher.out", "run_launcher.log"):
+    for f in (".fbtools.json", "kiosk.log", "kiosk.boot.log", "kiosk.pid", "fbboot_off", "fbboot_hook.sh", "boot.log", "fblauncher.out", "run_launcher.log", "fbrun.pid"):
         dev.sh(dev.rmf(b + "/" + f), timeout=20)
     if remove_data:
         log("Removing your data (notes, music, carts)...")
@@ -339,6 +389,8 @@ def do_uninstall(dev, plat, remove_data, log):
         log("Your notes, music, and carts were kept.")
     if plat == "ios7":
         ios_respring(dev, log)
+    elif plat == "ios12" and m.get("tweak", True):
+        dev.sh("rm -f /var/root/.disable_fbmode; killall -9 SpringBoard", timeout=30)
 
 
 def do_repair(dev, plat, log):
@@ -347,14 +399,18 @@ def do_repair(dev, plat, log):
     if plat == "android":
         android_up(dev, log)
     app_ids = m.get("apps", []); mode = m.get("mode", "none")
-    exp = expected_files(plat, app_ids)
+    exp = expected_files(plat, app_ids, mtweak(m))
     log("Checking %d files..." % len(exp))
     bad, old = problems_for(dev, plat, m)
     if bad or old:
         for rel, remote, md, why in bad + old: log("  %s: %s" % (remote, why))
         log("Restoring %d file%s..." % (len(bad) + len(old), "" if len(bad) + len(old) == 1 else "s"))
         copy_files(dev, plat, [(r, rem, md) for r, rem, md, _ in bad + old], log)
+        if plat == "ios12" and any(r.startswith("lib/") for r, _, _, _ in bad + old):
+            log("Restarting SpringBoard so the restored tweak loads...")
+            dev.sh("killall -9 SpringBoard", timeout=30)
         m["apps"] = app_ids
+        m["files"] = [r for _, r, _ in exp]                            # the manifest lists every file we now own
         record_sizes(dev, plat, m)
         write_manifest(dev, plat, m)
     else:
@@ -413,7 +469,7 @@ def do_start(dev, plat, log):
     if plat == "android":
         android_up_needed = "not found" not in dev.sh("service check window", timeout=15).stdout.decode()
         log("Starting FB Tools on the phone (Android stops while it runs)...")
-        dev.sh(dev.rmf(b + "/fbboot_off") + "; " + b + "/fbstart", timeout=20)
+        dev.sh(dev.rmf(b + "/fbboot_off") + "; " + b + "/fbrun -d 3600 fblauncher", timeout=20)
     elif plat == "ios7":
         log("Starting FB Tools...")
         dev.sh("(sh /var/root/run_kiosk_ios.sh 3 </dev/null >/dev/null 2>&1 &) ; true" if m.get("mode") == "boot"
@@ -444,5 +500,6 @@ def status(dev):
         out["problems"] = ["%s: %s" % (why, remote) for _, remote, _, why in bad]
         out["updates"] = [remote for _, remote, _, _ in old]
     if plat == "ios12":
-        out["note"] = "On this iPhone, FB Tools runs for about 2 minutes at a time. A tweak for long runs is not built yet. It cannot start at boot."
+        out["note"] = ("With the FB Tools tweak (installed with FB Tools), a run has no time limit. This iPhone cannot start FB Tools at boot, "
+                       "because the jailbreak must be started again after every restart.")
     return out

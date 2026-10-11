@@ -37,7 +37,13 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     // Without the tweak the program uses layer 0 and the launch script freezes SpringBoard (limited to ~110 s).
     // PLAT_FROZEN=1 forces the old mode. PLAT_LAYER overrides the layer.
     plat__parent = getenv("FB_PARENT") != NULL;
+#ifdef __LP64__
+    // iOS 12: our own loader (/usr/lib/TweakInject.dylib) loads /usr/lib/FBMode12.dylib into SpringBoard.
+    plat__live = access("/usr/lib/FBMode12.dylib", F_OK) == 0 && access("/usr/lib/TweakInject.dylib", F_OK) == 0 &&
+                 access("/var/root/.disable_fbmode", F_OK) != 0 && !getenv("PLAT_FROZEN");
+#else
     plat__live = access("/Library/MobileSubstrate/DynamicLibraries/FBMode.dylib", F_OK) == 0 && !getenv("PLAT_FROZEN");
+#endif
     const char *lay = getenv("PLAT_LAYER");
 #ifdef __LP64__
     plat__fb.layer = lay ? atoi(lay) : 1;       // iOS 12: layer 1 shows on top of the system picture

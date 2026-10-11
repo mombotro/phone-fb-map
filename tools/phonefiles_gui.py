@@ -243,7 +243,7 @@ class Android:
         if not self.can_change(path): raise PhoneError(PROTECTED_MSG)
 
     def exists(self, path):
-        return self.sh("[ -e %s ] && echo y || echo n" % q(path), timeout=15).stdout.decode().strip().startswith("y")
+        return self.sh("ls %s >/dev/null 2>&1 && echo y || echo n" % q(path), timeout=15).stdout.decode().strip().endswith("y")
 
     def __init__(self, serial):
         self.serial = serial
@@ -290,8 +290,8 @@ class Android:
         return parse_listing(text)
 
     def is_dir(self, path):
-        r = self.sh("[ -d %s ] && echo d || echo f" % q(path), timeout=15)
-        return r.stdout.decode().strip().startswith("d")
+        r = self.sh("cd %s && echo d || echo f" % q(path), timeout=15)      # "cd" works in every shell; Android 2.3 has no "[" or "test"
+        return r.stdout.decode().strip().endswith("d")
 
     def pull_file(self, path, local):
         stage = ANDROID_TMP + "/.pf_stage"
@@ -342,7 +342,7 @@ class Android:
 
     # --- used by the FB Tools manager (not limited by the protection rules: it only touches its own files)
     def rmf(self, path):
-        return "[ -e %s ] && rm -r %s" % (q(path), q(path))        # this shell has no "rm -f"
+        return "rm -r %s" % q(path)                                 # an error for a missing file is harmless; the old shell has no "[" or "rm -f"
 
     def put_file(self, local, remote, mode=0o755):
         stage = ANDROID_TMP + "/.pf_up"
@@ -363,12 +363,11 @@ class Android:
 
     def mkdir(self, path):
         parts = [x for x in path.split("/") if x]
-        cur = ""
-        cmds = []
+        cur, cmds = "", []
         for p in parts:
             cur += "/" + p
-            cmds.append("[ -d %s ] || mkdir %s" % (q(cur), q(cur)))
-        r = self.sh("; ".join(cmds), timeout=30)
+            cmds.append("mkdir %s" % q(cur))                         # errors for folders that exist are harmless
+        self.sh("; ".join(cmds), timeout=30)
         if not self.is_dir(path): raise PhoneError("cannot create the folder")
 
     def write(self, path, reader, length):

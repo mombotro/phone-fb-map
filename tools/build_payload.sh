@@ -11,7 +11,9 @@ music/build.sh >/dev/null 2>&1 || echo "  (iPhone music player not rebuilt: musi
 music/build_android.sh >/dev/null
 launcher/android_apk/build.sh >/dev/null
 NDK=$(ls -d "$HOME"/Library/Android/sdk/ndk/27.* | head -1)
-"$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang" -O2 -static -fno-pie -fno-emulated-tls -o build/fbls_android tools/fbls.c
+CC="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
+$CC -O2 -static -fno-pie -fno-emulated-tls -o build/fbls_android tools/fbls.c
+$CC -O2 -Wall -static -fno-pie -fno-emulated-tls -o build/fbrun_android launcher/fbrun.c
 
 P=tools/payload; rm -rf $P; mkdir -p $P/ios7/bin $P/ios7/FBTools.app $P/ios12/bin $P/ios12/FBTools.app $P/android/bin
 echo "== iPhone 4 (iOS 7)"
@@ -27,12 +29,17 @@ for f in build/ios12/*; do cp "$f" $P/ios12/bin/; done
 cp common/ios12.entitlements.plist common/run_ios12.sh $P/ios12/
 clang -target arm64-apple-ios9.0 -O2 -DIOS12 -isysroot "$SDK" -Wl,-w -o $P/ios12/FBTools.app/FBTools launcher/fbtools_stub.c
 cp launcher/Info.plist $P/ios12/FBTools.app/Info.plist; python3 launcher/make_icon.py $P/ios12/FBTools.app
+echo "== iPhone 5s tweak (our own loader and the SpringBoard tweak)"
+mkdir -p $P/ios12/lib
+clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache \
+    -install_name /usr/lib/TweakInject.dylib -o $P/ios12/lib/TweakInject.dylib tweak/ios12/TweakInject.c
+clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache \
+    -install_name /usr/lib/FBMode12.dylib -o $P/ios12/lib/FBMode12.dylib -x objective-c tweak/ios12/FBMode12.m -x none build/stubs/CoreFoundation.tbd
 echo "== Android"
 for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer musicplayer:musicplayer condemo:condemo; do
     cp build/${f##*:}_android $P/android/bin/${f%%:*}
 done
-cp build/fbls_android $P/android/bin/fbls; cp build/fbstart_android $P/android/bin/fbstart
+cp build/fbls_android $P/android/bin/fbls; cp build/fbrun_android $P/android/bin/fbrun
 cp music/android/helper.jar $P/android/musichelper.jar
-cp common/run_launcher.sh $P/android/run_launcher.sh; cp launcher/run_boot_android.sh $P/android/run_boot.sh
 cp launcher/android_apk/FBTools.apk $P/android/FBTools.apk
 echo "payload ready: $(find $P -type f | wc -l | tr -d ' ') files"

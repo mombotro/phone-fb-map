@@ -20,7 +20,7 @@ ios() {
 }
 # Android API 16+ : static, because NDK r27 cannot target API 16 dynamically. -fno-emulated-tls and the
 # aligned TLS variable in plat_android.h keep bionic's static startup from rejecting the TLS segment.
-android() { "$ACC" -O2 -static -fno-pie -fno-emulated-tls -o "build/$2_android" "$1"; }
+android() { "$ACC" -O2 -static -fno-pie -fno-emulated-tls -o "build/$2_android" "$1" -lm; }
 
 ios fbdemo.c fbdemo
 for t in paint condemo fbshell calib fbreset notes timer; do ios common/$t.c $t; done
