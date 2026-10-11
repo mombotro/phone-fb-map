@@ -20,6 +20,10 @@
 #include "third_party/stb_image.h"
 #include "lhnet.h"
 #include <pthread.h>
+#include <sys/stat.h>
+#ifdef __ANDROID__
+#include <sys/syscall.h>               // rename() fails on Android 4.1 with this toolkit: call the kernel
+#endif
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
@@ -129,8 +133,11 @@ static const char *jstr(const JN *j) { return j && j->t == J_STR && j->s ? j->s 
 // ---------------------------------------------------------------- HTTP (plain, one request per connection)
 
 static char g_err[200];
-typedef struct { char host[64]; int port; char token[1024]; char person[96]; char name[64]; char home[96]; char home_id[96]; char sig_host[64]; char sig_path[96]; char sig_ip[48]; } Cfg;
+typedef struct { char host[64]; int port; char token[1024]; char person[96]; char name[64]; char home[96]; char home_id[96]; char sig_host[64]; char sig_path[96]; char sig_ip[48]; char refresh[80]; } Cfg;
 static unsigned long g_node_epoch, g_node_epoch_at;      // the home-node's clock (HTTP Date header), for the TLS certificate dates
+static char g_dir[256];                                   // the data folder (session.json and directory.json)
+static pthread_mutex_t g_cfg_lock = PTHREAD_MUTEX_INITIALIZER;   // guards the token and the name list while a thread renews them
+static unsigned long tls_epoch(void) { return g_node_epoch ? g_node_epoch + ((unsigned long)time(NULL) - g_node_epoch_at) : (unsigned long)time(NULL); }
 static Cfg g_cfg;
 static int g_have_cfg;
 
@@ -179,16 +186,17 @@ static char *dechunk(const char *in, size_t n, size_t *outn) {   // decode "Tran
 }
 
 // Returns the HTTP status (0 on a network error). *out is a malloc'ed, NUL-terminated body.
-static int http_do(const char *method, const char *path, const char *body, char **out) {
+static int http_do_raw(const char *method, const char *path, const char *body, char **out) {
     *out = NULL; g_err[0] = 0;
     if (!g_have_cfg) { snprintf(g_err, sizeof g_err, "no session: run tools/longhouse_login.py on the Mac"); return 0; }
     int fd = connect_to(g_cfg.host, g_cfg.port);
     if (fd < 0) return 0;
     size_t bl = body ? strlen(body) : 0;
+    char tok[1024]; pthread_mutex_lock(&g_cfg_lock); snprintf(tok, sizeof tok, "%s", g_cfg.token); pthread_mutex_unlock(&g_cfg_lock);
     char *req = malloc(bl + 1400);
     int rl = snprintf(req, bl + 1400, "%s %s HTTP/1.1\r\nHost: %s:%d\r\nAuthorization: Bearer %s\r\nAccept: application/json\r\n"
                       "Content-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
-                      method, path, g_cfg.host, g_cfg.port, g_cfg.token, bl, body ? body : "");
+                      method, path, g_cfg.host, g_cfg.port, tok, bl, body ? body : "");
     if (send(fd, req, (size_t)rl, 0) != rl) { snprintf(g_err, sizeof g_err, "send failed"); free(req); close(fd); return 0; }
     free(req);
     size_t cap = 16384, n = 0; char *buf = malloc(cap);
@@ -222,6 +230,63 @@ static int http_do(const char *method, const char *path, const char *body, char 
     return status;
 }
 
+static void json_escape(const char *s, char *out, size_t n);
+static void ascii_clean(char *s);
+// ---------------------------------------------------------------- the phone signs itself in (renews its session)
+
+static long jwt_exp(const char *tok) {                          // the middle part of a token is base64url JSON with "exp" (seconds since 1970)
+    const char *d1 = strchr(tok, '.'); if (!d1) return 0;
+    const char *d2 = strchr(d1 + 1, '.'); if (!d2) return 0;
+    size_t n = (size_t)(d2 - d1 - 1); if (n == 0 || n > 600) return 0;
+    char tmp[640]; for (size_t i = 0; i < n; i++) { char ch = d1[1 + i]; tmp[i] = ch == '-' ? '+' : (ch == '_' ? '/' : ch); } tmp[n] = 0;
+    unsigned char out[480]; size_t on = lh_b64_decode(tmp, n, out); out[on < 479 ? on : 479] = 0;
+    const char *e = strstr((char *)out, "\"exp\":"); return e ? atol(e + 6) : 0;
+}
+
+static void save_session(void) {                                 // write session.json back, so a renewed token survives a restart
+    char path[300], tmp[310]; snprintf(path, sizeof path, "%s/session.json", g_dir); snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w"); if (!f) return;
+    fprintf(f, "{\"home\":\"%s\",\"signaling\":\"https://%s%s\",\"signalingIp\":\"%s\",\"token\":\"%s\",\"refreshSecret\":\"%s\",\"personId\":\"%s\",\"homeId\":\"%s\",\"displayName\":\"%s\"}\n",
+            g_cfg.home, g_cfg.sig_host, g_cfg.sig_path, g_cfg.sig_ip, g_cfg.token, g_cfg.refresh, g_cfg.person, g_cfg.home_id, g_cfg.name);
+    fclose(f); chmod(tmp, 0600);
+#ifdef __ANDROID__
+    syscall(__NR_rename, tmp, path);
+#else
+    rename(tmp, path);
+#endif
+}
+
+static long g_exp;                                                 // when the current token ends
+static int refresh_token(void) {                                   // 0 on success
+    if (!g_cfg.refresh[0] || !g_cfg.sig_host[0]) { snprintf(g_err, sizeof g_err, "session ended: sign in again on the Mac"); return -1; }
+    char path[200], body[400], *out = NULL;
+    snprintf(path, sizeof path, "%s/session/refresh", g_cfg.sig_path);
+    snprintf(body, sizeof body, "{\"kind\":\"person\",\"id\":\"%s\",\"refreshSecret\":\"%s\"}", g_cfg.person, g_cfg.refresh);
+    int st = lh_https(g_cfg.sig_host, "POST", path, NULL, body, tls_epoch(), &out);
+    if (st != 200) {
+        if (!st) snprintf(g_err, sizeof g_err, "renewing the session failed: %s", lh_err);
+        else if (st == 401 || st == 403) snprintf(g_err, sizeof g_err, "the seat was revoked or replaced: sign in again on the Mac");
+        else snprintf(g_err, sizeof g_err, "renewing the session failed (%d)", st);
+        free(out); return -1;
+    }
+    JN *j = jparse(out); free(out);
+    const char *tok = jstr(jget(j, "token"));
+    if (!tok[0]) { jfree(j); snprintf(g_err, sizeof g_err, "renewing the session: unexpected answer"); return -1; }
+    pthread_mutex_lock(&g_cfg_lock); snprintf(g_cfg.token, sizeof g_cfg.token, "%s", tok); pthread_mutex_unlock(&g_cfg_lock);
+    JN *ex = jget(j, "exp"); g_exp = ex && ex->t == J_NUM ? (long)ex->n : jwt_exp(tok);
+    jfree(j); save_session(); return 0;
+}
+
+static int token_needs_renewal(void) { long now = (long)tls_epoch(); return g_exp && g_exp - now < 3600; }     // less than an hour left
+
+
+static int http_do(const char *method, const char *path, const char *body, char **out) {
+    if (token_needs_renewal()) refresh_token();                  // under an hour left: renew now (a failure is retried below if the home refuses)
+    int st = http_do_raw(method, path, body, out);
+    if ((st == 401 || st == 403) && g_cfg.refresh[0]) { free(*out); *out = NULL; if (refresh_token() == 0) st = http_do_raw(method, path, body, out); }
+    return st;
+}
+
 // ---------------------------------------------------------------- data
 
 typedef struct { char id[96]; char kind[8]; char title[100]; char members[16][96]; int nmem; } Conv;
@@ -234,7 +299,9 @@ typedef struct { char id[96]; char name[64]; } Name;
 static Name g_names[256]; static int g_nnames;
 
 static const char *name_of(const char *id) {
-    for (int i = 0; i < g_nnames; i++) if (!strcmp(g_names[i].id, id)) return g_names[i].name;
+    pthread_mutex_lock(&g_cfg_lock);
+    for (int i = 0; i < g_nnames; i++) if (!strcmp(g_names[i].id, id)) { static char found[64]; snprintf(found, sizeof found, "%s", g_names[i].name); pthread_mutex_unlock(&g_cfg_lock); return found; }
+    pthread_mutex_unlock(&g_cfg_lock);
     static char tmp[16]; snprintf(tmp, sizeof tmp, "%.8s", id); return tmp;
 }
 
@@ -255,6 +322,7 @@ static void load_config(const char *dir) {
         snprintf(g_cfg.name, sizeof g_cfg.name, "%s", jstr(jget(j, "displayName")));
         snprintf(g_cfg.home, sizeof g_cfg.home, "%s", jstr(jget(j, "home")));
         snprintf(g_cfg.home_id, sizeof g_cfg.home_id, "%s", jstr(jget(j, "homeId")));
+        snprintf(g_cfg.refresh, sizeof g_cfg.refresh, "%s", jstr(jget(j, "refreshSecret")));
         const char *sig = jstr(jget(j, "signaling")); if (!sig[0]) sig = "https://longhouse.tech/longhouse";      // "https://host/path"
         g_cfg.sig_host[0] = 0; g_cfg.sig_path[0] = 0;
         snprintf(g_cfg.sig_ip, sizeof g_cfg.sig_ip, "%s", jstr(jget(j, "signalingIp")));
@@ -376,6 +444,46 @@ static int send_message(const char *conv_id, const char *text) {
     return st == 200 ? 0 : -1;
 }
 
+static int refresh_roster(void) {                                  // fetch the people's names from the signaling server and keep them in directory.json
+    char path[200], *out = NULL; snprintf(path, sizeof path, "%s/roster", g_cfg.sig_path);
+    char tok[1024]; pthread_mutex_lock(&g_cfg_lock); snprintf(tok, sizeof tok, "%s", g_cfg.token); pthread_mutex_unlock(&g_cfg_lock);
+    int st = lh_https(g_cfg.sig_host, "GET", path, tok, NULL, tls_epoch(), &out);
+    if (st != 200) { free(out); return -1; }
+    JN *j = jparse(out); free(out);
+    JN *persons = jget(j, "persons"); if (!persons || persons->t != J_ARR) { jfree(j); return -1; }
+    pthread_mutex_lock(&g_cfg_lock);
+    g_nnames = 0;
+    for (int i = 0; i < persons->len && g_nnames < 256; i++) {
+        snprintf(g_names[g_nnames].id, sizeof g_names[0].id, "%s", jstr(jget(persons->v[i], "id")));
+        snprintf(g_names[g_nnames].name, sizeof g_names[0].name, "%s", jstr(jget(persons->v[i], "displayName")));
+        ascii_clean(g_names[g_nnames].name); g_nnames++;
+    }
+    pthread_mutex_unlock(&g_cfg_lock);
+    jfree(j);
+    char dpath[300], tmp[310]; snprintf(dpath, sizeof dpath, "%s/directory.json", g_dir); snprintf(tmp, sizeof tmp, "%s.tmp", dpath);
+    FILE *f = fopen(tmp, "w");
+    if (f) {
+        fputs("{\"names\":{", f);
+        for (int i = 0; i < g_nnames; i++) { char en[140]; json_escape(g_names[i].name, en, sizeof en); fprintf(f, "%s\"%s\":\"%s\"", i ? "," : "", g_names[i].id, en); }
+        fputs("}}\n", f); fclose(f);
+#ifdef __ANDROID__
+        syscall(__NR_rename, tmp, dpath);
+#else
+        rename(tmp, dpath);
+#endif
+    }
+    return 0;
+}
+
+// Runs once at start-up in a thread: learn the home-node's clock, renew the session if it is old, refresh the names.
+static void *boot_worker(void *arg) {
+    (void)arg;
+    char *o = NULL; http_do_raw("GET", "/health", NULL, &o); free(o);     // the Date header gives a good clock for the certificate check
+    if (!g_exp || token_needs_renewal()) refresh_token();
+    refresh_roster();
+    return NULL;
+}
+
 // ---------------------------------------------------------------- pictures (thumbnails) in a background thread
 
 #define MAXPIC 12
@@ -396,8 +504,6 @@ static void pic_request(const char *id) {                       // main thread: 
     }
     pthread_mutex_unlock(&g_pm);
 }
-
-static unsigned long tls_epoch(void) { return g_node_epoch ? g_node_epoch + ((unsigned long)time(NULL) - g_node_epoch_at) : (unsigned long)time(NULL); }
 
 static void *pic_worker(void *arg) {
     (void)arg;
@@ -420,8 +526,13 @@ static void *pic_worker(void *arg) {
             if (!c->open) {
                 lh_err[0] = 0;
                 if (lh_tls_open(c, g_cfg.sig_host, 443, tls_epoch())) { snprintf(err, sizeof err, "%s", lh_err); break; }
-                char path[1300]; snprintf(path, sizeof path, "%s/ws?token=%s", g_cfg.sig_path, g_cfg.token);
-                if (lh_ws_open(c, g_cfg.sig_host, path)) { snprintf(err, sizeof err, "%s", lh_err); lh_close(c); break; }
+                char tok[1024]; pthread_mutex_lock(&g_cfg_lock); snprintf(tok, sizeof tok, "%s", g_cfg.token); pthread_mutex_unlock(&g_cfg_lock);
+                char path[1300]; snprintf(path, sizeof path, "%s/ws?token=%s", g_cfg.sig_path, tok);
+                if (lh_ws_open(c, g_cfg.sig_host, path)) {
+                    snprintf(err, sizeof err, "%s", lh_err); lh_close(c);
+                    if (strstr(err, " 401") && attempt == 0 && refresh_token() == 0) continue;                // the token ended: renew and try again
+                    break;
+                }
             }
             jpg = lh_get_thumbnail(c, g_cfg.home_id, id, ++rpc, &jl);
             if (!jpg) { snprintf(err, sizeof err, "%s", lh_err); lh_close(c); }
@@ -495,8 +606,10 @@ int main(int argc, char **argv) {
     if (plat_init(&pi)) return 1;
     if (plat_touch_init(&pi)) return 1;
     int W = pi.w, H = pi.h;
-    load_config(dir);
+    snprintf(g_dir, sizeof g_dir, "%s", dir);
+    load_config(dir); g_exp = jwt_exp(g_cfg.token);
     signal(SIGPIPE, SIG_IGN);
+    if (g_have_cfg && g_cfg.sig_host[0]) { pthread_t bt; if (pthread_create(&bt, NULL, boot_worker, NULL) == 0) pthread_detach(bt); }
     if (g_have_cfg && g_cfg.sig_host[0] && g_cfg.home_id[0]) { pthread_t th; if (pthread_create(&th, NULL, pic_worker, NULL) == 0) pthread_detach(th); }
 
     int key_h = W / 8, kbd_h = key_h * 5 + 6, kb_y = H - kbd_h;
@@ -540,7 +653,7 @@ int main(int argc, char **argv) {
         dirty--;
 
         int stride; uint32_t *px = plat_begin(&stride);
-        Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+        Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
         u.s = &s; u.W = W; u.H = H;
         draw_rect(&s, 0, 0, W, H, 0x10161E);
         draw_rect(&s, 0, 0, W, BAR, 0x26303E);
@@ -586,19 +699,20 @@ int main(int argc, char **argv) {
                 int nl = wrap_lines(g_msg[i].body, cols, st, ln, 64), ex = pic_extra(&g_msg[i]), h = LH + nl * LH + 12 + ex;
                 if (y + h > my && y < my + mh) {
                     int mine = !strcmp(g_msg[i].sender, g_cfg.person);
-                    draw_rect(&s, 4, y, W - 8, h - 6, mine ? 0x1D3A2C : 0x1A2230);
+                    int r0 = y < my ? my : y, r1 = y + h - 6 > my + mh ? my + mh : y + h - 6;           // clip the bubble to the message area, so it never covers the header
+                    if (r1 > r0) draw_rect(&s, 4, r0, W - 8, r1 - r0, mine ? 0x1D3A2C : 0x1A2230);
                     char head[160]; snprintf(head, sizeof head, "%s  %s%s", name_of(g_msg[i].sender), g_msg[i].when, g_msg[i].edited ? "  (edited)" : "");
-                    ui_label(&u, 12, y + 4, 1, head, mine ? 0x77DD99 : 0x77BBFF);
+                    if (y + 4 >= my && y + 4 + 16 <= my + mh) ui_label(&u, 12, y + 4, 1, head, mine ? 0x77DD99 : 0x77BBFF);
                     for (int l = 0; l < nl; l++) {
                         char line[300]; int ll = ln[l] < 299 ? ln[l] : 299; memcpy(line, g_msg[i].body + st[l], (size_t)ll); line[ll] = 0;
                         int ly2 = y + LH - 4 + l * LH;
-                        if (ly2 + LH > my && ly2 < my + mh) ui_label(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8);
+                        if (ly2 >= my && ly2 + LH <= my + mh) ui_label(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8);       // whole lines only
                     }
                     if (ex) {
                         int iy2 = y + LH - 4 + nl * LH + 4;
                         pthread_mutex_lock(&g_pm); Pic *pp = pic_find(g_msg[i].id);
                         if (pp && pp->state == 2) blit_rgb(&s, 12, iy2, pp->rgb, pp->w, pp->h, my, my + mh);
-                        else if (pp && pp->state == 3 && iy2 + 16 > my && iy2 < my + mh) { char eb[100]; snprintf(eb, sizeof eb, "(picture: %.70s)", pp->err); ui_label(&u, 12, iy2, 1, eb, 0xFFAA66); }
+                        else if (pp && pp->state == 3 && iy2 >= my && iy2 + 16 <= my + mh) { char eb[100]; snprintf(eb, sizeof eb, "(picture: %.70s)", pp->err); ui_label(&u, 12, iy2, 1, eb, 0xFFAA66); }
                         pthread_mutex_unlock(&g_pm);
                     }
                 }

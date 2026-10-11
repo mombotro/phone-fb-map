@@ -23,6 +23,12 @@ static int plat__screen_off;                 // /tmp/fbscreen_off exists: the po
 static double plat__off_check;
 static double plat__reassert_until, plat__last_reassert;   // after the screen comes back on, keep re-showing our picture
 
+static int plat__theme_setting(void) {                      // palm (the default) or dark
+    const char *e = getenv("FB_THEME"); char b[16] = "";
+    if (!e) { FILE *f = fopen("/var/root/theme", "r"); if (f) { if (fscanf(f, "%15s", b) == 1) e = b; fclose(f); } }
+    return !(e && !strcmp(e, "dark"));
+}
+
 PLAT_FN int plat_init(PlatInfo *pi) {
 #ifdef __LP64__
     const int W0 = 640, H0 = 1136;
@@ -65,6 +71,7 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     pi->w = plat__w = W0; pi->h = plat__h = H0;
     pi->rs = 16; pi->gs = 8; pi->bs = 0;    // 0xAARRGGBB
     pi->alpha = 0xFF000000u;
+    pi->theme = plat__theme_setting();
     return 0;
 }
 

@@ -303,7 +303,7 @@ function renderFbt() {
   if (!st.installed) h += `<div class="row" style="margin-top:0"><button class="primary" id="b-install" ${st.payload_ok ? "" : "disabled"}>Install FB Tools</button></div>`;
   else h += `<div class="row" style="margin-top:0"><button id="b-start">Start FB Tools now</button><button id="b-repair2">Repair (restore missing files)</button><button id="b-reinstall">Reinstall all files</button><button class="danger" id="b-uninst">Uninstall</button></div>
     <label style="display:block;margin-top:10px"><input type="checkbox" id="rmdata"> When I uninstall, also delete my notes, music, and carts</label>`;
-  h += `</div>${keepLog || '<div id="joblog"></div>'}`;
+  h += `</div><h3>Longhouse chat</h3><div class="card" id="lhcard">Checking this phone...</div>${keepLog || '<div id="joblog"></div>'}`;
   box.innerHTML = h;
   const on = (id, fn) => { const e = $(id); if (e) e.onclick = fn; };
   document.querySelectorAll("input[name=mode]").forEach((r) => r.onchange = () => { window.pickedMode = r.value; });
@@ -315,6 +315,33 @@ function renderFbt() {
   on("b-reinstall", () => { if (confirm("Copy every FB Tools program to the phone again? Your notes, music, and other data are not touched.")) runJob("repair", { force: true }); });
   on("b-uninst", () => { if (confirm("Remove FB Tools from this phone?" + ($("rmdata").checked ? "\n\nThis also DELETES your notes, music, and carts." : "\n\nYour notes, music, and carts stay."))) runJob("uninstall", { remove_data: $("rmdata").checked }); });
   box.querySelectorAll("[data-app]").forEach((b) => b.onclick = () => runJob("app", { id: b.dataset.app, action: b.dataset.act }));
+  loadLonghouse();
+}
+// ---- Longhouse sign-in: the invite link is typed here, used once, and never stored. The phone keeps only a renewal secret.
+async function loadLonghouse() {
+  const card = $("lhcard"); if (!card) return;
+  let st; try { st = await call("/api/longhouse/status", { dev: dev.id }); } catch (e) { card.textContent = e.message; return; }
+  const app = fbs && fbs.apps.find((a) => a.id === "longhouse");
+  let h = "";
+  if (!app) h += "<p><small>This phone type has no Longhouse app.</small></p>";
+  else if (!app.installed) h += "<p><small>Add the <b>Longhouse chat</b> app above first, then sign in here.</small></p>";
+  if (st.signedIn) h += `<p><b>Signed in as ${esc(st.displayName || "?")}.</b> The phone renews its own session, so you do this once. Home-node: ${esc(st.home)}</p>`;
+  else h += "<p>Not signed in on this phone.</p>";
+  h += `<form id="lhform" autocomplete="off"><div style="margin:8px 0 4px"><label>Longhouse invite link<br><input id="lhinvite" type="password" autocomplete="off" spellcheck="false" placeholder="https://longhouse.tech/longhouse/?person=...&key=..." style="width:100%;max-width:640px"></label></div>
+    <div style="margin:8px 0"><label>Home-node address on your Wi-Fi<br><input id="lhhome" type="text" value="${esc(st.savedHome || st.home || "")}" placeholder="http://192.168.1.20:8787" style="width:100%;max-width:640px"></label></div>
+    <small>The link stays on this Mac, is used once, and is not saved. Only a renewal secret goes to the phone.</small>
+    <div class="row"><button class="primary" id="lhgo" type="submit">${st.signedIn ? "Sign in again" : "Sign in"} and put it on this phone</button>${st.signedIn ? '<button type="button" class="danger" id="lhout">Sign out of this phone</button>' : ""}</div></form>`;
+  card.innerHTML = h;
+  $("lhform").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const invite = $("lhinvite").value, home = $("lhhome").value; $("lhinvite").value = "";                 // clear the secret from the page at once
+    if (!invite.trim()) { toast("Paste the invite link first", true); return; }
+    $("lhgo").disabled = true; toast("Signing in...");
+    try { const r = await call("/api/longhouse/signin", { dev: dev.id }, { method: "POST", body: JSON.stringify({ invite, home }) }); toast("Signed in as " + r.displayName + ". Open Chat on the phone."); }
+    catch (e) { toast(e.message, true); }
+    loadLonghouse();
+  };
+  const out = $("lhout"); if (out) out.onclick = async () => { if (!confirm("Remove the Longhouse sign-in from this phone?")) return; try { await call("/api/longhouse/signout", { dev: dev.id }, { method: "POST", body: "{}" }); toast("Signed out"); } catch (e) { toast(e.message, true); } loadLonghouse(); };
 }
 async function runJob(action, body) {
   const lg = $("joblog"); lg.style.display = "block"; lg.textContent = "Starting...\n";

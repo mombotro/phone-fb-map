@@ -55,7 +55,7 @@ Install the SpringBoard tweak once on the iPhone. Without it, an iPhone program 
 With it, a program can run as long as it needs. We played a 4-minute song and a 5-minute game.
 
 To start the picker from the phone, run `launcher/install_icon_ios.sh` once. It adds the FB Tools icon to the home screen.
-Tap the icon, then tap a tile. The Shut down tile turns the phone off after you confirm.
+Tap the icon, then tap a tile. The picker is called momOSX and has a Palm-style look: a dark title bar with the clock, and outlined tiles. The Shut down tile turns the phone off after you confirm. The Exit tile is hidden. To show it, make the file `show_exit` in the data folder. To get the old dark look, put the word `dark` in the file `theme`. On Android, the power button turns the screen off and on.
 
 The iPhone 5s (iOS 12, jailbroken with Chimera) runs the same programs as arm64 builds. Run `tools/build_ios12.sh`, then `tools/deploy_ios12.sh`.
 The deploy script signs the programs on the phone, because the Mac `ldid` is too old for iOS 12. Run a program with `run_ios12.sh PROGRAM` on the phone.
@@ -70,7 +70,7 @@ It uses SSH for iPhones and `adb` for Android phones.
 It only deletes, renames, or overwrites your own files: notes, music, carts, and app data. System files and the programs on the phone are locked. A lock icon marks them.
 
 The FB Tools tab in Phone Files installs FB Tools on a phone, and removes it again. It also does these jobs:
-- Choose how FB Tools starts: boot straight into it (no Exit), an icon on the home screen, or nothing.
+- Choose how FB Tools starts: boot straight into it (no way out except Shut down), an icon on the home screen, or nothing.
 - Add or remove one app at a time. Notes, music, and carts stay when you remove an app.
 - Repair a broken install. It checks each file against the copy in the app, and restores any that are missing or changed.
 

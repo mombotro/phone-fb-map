@@ -14,6 +14,7 @@ import posixpath, tempfile, threading, time, urllib.parse, webbrowser, zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import fbtools_manager as fbm
+import longhouse_login as lhl
 TOKEN = secrets.token_urlsafe(18)
 LAST_PING = time.time()
 FBLS_CANDIDATES = [os.path.join(HERE, "fbls_android"), os.path.join(HERE, "..", "build", "fbls_android")]
@@ -433,6 +434,34 @@ def refresh_devices():
     return list(found.values())
 
 
+APP_SUPPORT = os.path.expanduser("~/Library/Application Support/PhoneFiles")
+
+
+def lh_saved_home():
+    try:
+        return json.load(open(os.path.join(APP_SUPPORT, "longhouse.json"))).get("home", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def lh_save_home(home):
+    os.makedirs(APP_SUPPORT, mode=0o700, exist_ok=True)
+    with open(os.path.join(APP_SUPPORT, "longhouse.json"), "w") as f: json.dump({"home": home}, f)
+
+
+def longhouse_status(dev):
+    """What the phone has: never returns the token or the refresh secret."""
+    text = dev.get_text(lhl.device_folder(dev) + "/session.json")
+    out = {"signedIn": False, "savedHome": lh_saved_home()}
+    try:
+        j = json.loads(text) if text else None
+    except ValueError:
+        j = None
+    if j and j.get("token"):
+        out.update({"signedIn": True, "displayName": j.get("displayName", ""), "home": j.get("home", ""), "canRenew": bool(j.get("refreshSecret"))})
+    return out
+
+
 def get_device(dev_id):
     d = DEVICES.get(dev_id)
     if not d:
@@ -491,6 +520,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply(200, {"title": j.title, "lines": j.lines, "done": j.done, "ok": j.ok})
             d = get_device(qs.get("dev", [""])[0])
             path = qs.get("path", ["/"])[0]
+            if u.path == "/api/longhouse/status":
+                return self.reply(200, longhouse_status(d))
             if u.path == "/api/fbtools/status":
                 return self.reply(200, fbm.status(d))
             if u.path == "/api/ls":
@@ -530,6 +561,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 d.write(dest, self.rfile, length)
                 return self.reply(200, {"ok": True})
             body = json.loads(self.rfile.read(length) or b"{}")
+            if u.path == "/api/longhouse/signin":
+                try:
+                    session, names = lhl.sign_in(str(body.get("invite", "")), str(body.get("home", "")).strip())
+                    lhl.push_to_device(d, session, names)
+                except ValueError as e:
+                    raise PhoneError(str(e))
+                lh_save_home(session["home"])
+                return self.reply(200, {"ok": True, "displayName": session.get("displayName"), "people": len(names)})
+            if u.path == "/api/longhouse/signout":
+                folder = lhl.device_folder(d)
+                d.sh(d.rmf(folder + "/session.json") + "; " + d.rmf(folder + "/directory.json"), timeout=20)
+                return self.reply(200, {"ok": True})
             if u.path.startswith("/api/fbtools/"):
                 return self.reply(200, {"job": self.fbtools_action(d, u.path.rsplit("/", 1)[1], body)})
             if u.path == "/api/mkdir": d.mkdir(body["path"])

@@ -291,7 +291,7 @@ int main(int argc, char **argv) {
 
         if (dirty > 0) {
             int stride; uint32_t *px = plat_begin(&stride);
-            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
             draw_rect(&s, 0, 0, W, H, 0x101820);
 
             // list (clipped to its area by drawing rows, then covering the overflow with the header and panel)

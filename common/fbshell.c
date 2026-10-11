@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
             int stride;
             uint32_t *px = plat_begin(&stride);
             con_render(&c, px, stride, W, term_h, blink && alive);
-            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
             kbd_render(&kb, &s);
             plat_flip();
             dirty--;

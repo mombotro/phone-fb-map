@@ -161,6 +161,9 @@ int main(int argc, char **argv) {
             al_on = 0; alarm_save();                                      // an alarm rings once
         }
         if (ringing) {
+#ifndef __APPLE__
+            plat_screen_wake();                                      // the power button may have turned the screen off: an alarm must wake it
+#endif
             ring_sound(1);
             if (now - last_wake > 1.0) { FILE *f = fopen("/tmp/fbwake", "w"); if (f) fclose(f); last_wake = now; }
             dirty = 3;
@@ -172,7 +175,7 @@ int main(int argc, char **argv) {
         dirty--;
 
         int stride; uint32_t *px = plat_begin(&stride);
-        Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+        Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
         u.s = &s; u.W = W; u.H = H;
         int flash = ringing && ((int)((now - ring_t0) * 3) & 1);
         draw_rect(&s, 0, 0, W, H, ringing ? (flash ? 0x8A2A2A : 0x3A1010) : 0x10161E);

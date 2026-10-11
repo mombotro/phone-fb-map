@@ -5,8 +5,10 @@
 #include <linux/input.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -61,6 +63,70 @@ static double plat__now(void) {
     return tv.tv_sec + tv.tv_usec / 1e6;
 }
 
+
+// ---- the power button turns the screen off and on ----
+// With the framework stopped, nothing handles the power key, but it is still an input event. We read it, and switch between
+// "backlight 0 and the panel powered down" and "panel on and the backlight back". A flag file tells every program (the picker and the
+// tools it starts) that the screen is off. While it is off, touches are ignored and nothing is drawn.
+#define PLAT_OFF_FLAG "/data/local/tmp/fbscreen_off"
+static int plat__pwr_fd[4], plat__npwr, plat__off, plat__bl_on = 128;
+static char plat__bl_use[96];
+static double plat__wake_t;
+
+static void plat__bl_find(void) {
+    static const char *paths[] = { "/sys/class/leds/lcd-backlight/brightness", "/sys/class/leds/backlight/brightness",
+                                   "/sys/class/backlight/panel/brightness", "/sys/class/backlight/lcd-backlight/brightness" };
+    for (unsigned i = 0; i < sizeof paths / sizeof paths[0]; i++) {
+        int fd = open(paths[i], O_RDWR); if (fd < 0) continue;
+        char buf[16] = {0}; int n = (int)read(fd, buf, sizeof buf - 1); close(fd);
+        int v = n > 0 ? atoi(buf) : -1;
+        snprintf(plat__bl_use, sizeof plat__bl_use, "%s", paths[i]);
+        plat__bl_on = v >= 40 ? v : 128;                                   // the level to come back to
+        return;
+    }
+}
+static void plat__bl_set(int v) {
+    if (!plat__bl_use[0]) return;
+    int fd = open(plat__bl_use, O_WRONLY); if (fd < 0) return;
+    char b[16]; int l = snprintf(b, sizeof b, "%d", v); (void)!write(fd, b, (size_t)l); close(fd);
+}
+static void plat__screen_set(int off);
+
+// Called from plat_touch_poll in the program that shows something. A press of the power key toggles the screen.
+static void plat__sync_flag(void) {
+    int f = access(PLAT_OFF_FLAG, F_OK) == 0;
+    if (f && !plat__off) plat__off = 1;                                   // another program turned the screen off: agree
+    else if (!f && plat__off) { plat__off = 0; plat__wake_t = plat__now(); }
+}
+static void plat__power_events(int toggle) {                             // toggle=0: read and throw away (a program that is waiting)
+    struct input_event ev[16]; int pressed = 0;
+    for (int i = 0; i < plat__npwr; i++) for (;;) {
+        ssize_t n = read(plat__pwr_fd[i], ev, sizeof ev); if (n <= 0) break;
+        for (int k = 0; k < n / (int)sizeof ev[0]; k++) if (ev[k].type == EV_KEY && ev[k].code == KEY_POWER && ev[k].value == 1) pressed = 1;
+    }
+    if (pressed && toggle) plat__screen_set(!plat__off);
+}
+static void plat__screen_set(int off) {
+    if (off == plat__off) return;
+    if (off) {
+        plat__bl_set(0);
+        ioctl(plat__fd, FBIOBLANK, FB_BLANK_POWERDOWN);
+        FILE *f = fopen(PLAT_OFF_FLAG, "w"); if (f) fclose(f);
+        chmod(PLAT_OFF_FLAG, 0666);
+    } else {
+        ioctl(plat__fd, FBIOBLANK, FB_BLANK_UNBLANK);
+        struct fb_var_screeninfo pv = plat__v; pv.yoffset = (unsigned)(((plat__page + plat__pages - 1) % plat__pages) * (int)plat__v.yres);
+        ioctl(plat__fd, FBIOPAN_DISPLAY, &pv);                              // show the last picture again
+        plat__bl_set(plat__bl_on);
+        unlink(PLAT_OFF_FLAG);
+        plat__wake_t = plat__now();
+    }
+    plat__off = off;
+}
+
+// For programs that must wake the screen themselves (the alarm of the Timer).
+PLAT_FN void plat_screen_wake(void) { plat__sync_flag(); if (plat__off) plat__screen_set(0); }
+
 // Rotation for tablets whose screen is wider than tall (the Kindle Fire is 1024x600). The programs are designed for a tall screen,
 // so they get a 600x1024 buffer, and flip rotates it into the framebuffer. plat__rot: 0 none, 1 or 3 = the two directions.
 // The choice comes from $PLAT_ROTATE, then the file /data/local/tmp/plat_rotate (a single digit), then it is automatic.
@@ -73,6 +139,22 @@ static int plat__rotation_setting(void) {
     FILE *f = fopen("/data/local/tmp/plat_rotate", "r");
     if (f) { int v = -1; if (fscanf(f, "%d", &v) == 1) { fclose(f); return v; } fclose(f); }
     return -1;                                                  // not set: decide from the shape of the screen
+}
+
+// A static binary has no Android time zone. Ask the phone's own date command for the offset (like -0500) and use it.
+static void plat__timezone(void) {
+    if (getenv("TZ")) return;
+    FILE *f = popen("date +%z", "r"); if (!f) return;
+    char b[16] = ""; if (!fgets(b, sizeof b, f)) b[0] = 0; pclose(f);
+    if ((b[0] != '+' && b[0] != '-') || strlen(b) < 5) return;
+    int h = (b[1] - '0') * 10 + (b[2] - '0'), m = (b[3] - '0') * 10 + (b[4] - '0');
+    char tz[24]; snprintf(tz, sizeof tz, "UTC%c%02d:%02d", b[0] == '+' ? '-' : '+', h, m);   // POSIX sign is reversed
+    setenv("TZ", tz, 1); tzset();
+}
+static int plat__theme_setting(void) {                      // palm (the default) or dark
+    const char *e = getenv("FB_THEME"); char b[16] = "";
+    if (!e) { FILE *f = fopen("/data/local/tmp/theme", "r"); if (f) { if (fscanf(f, "%15s", b) == 1) e = b; fclose(f); } }
+    return !(e && !strcmp(e, "dark"));
 }
 
 PLAT_FN int plat_init(PlatInfo *pi) {
@@ -116,6 +198,10 @@ PLAT_FN int plat_init(PlatInfo *pi) {
     if (plat__v.red.offset == 24 && plat__v.green.offset == 16 && plat__v.blue.offset == 8 && plat__v.transp.offset == 0) {
         pi->rs = 0; pi->gs = 8; pi->bs = 16; pi->alpha = 0xFF000000u;
     }
+    pi->theme = plat__theme_setting();
+    plat__timezone();
+    plat__bl_find();                                           // after wake_panel: the level to return to when the screen comes back
+    if (!getenv("FB_PARENT")) unlink(PLAT_OFF_FLAG);           // a program started by the launcher keeps the state; a fresh start begins with the screen on
     plat__last = plat__now();
     return 0;
 }
@@ -138,6 +224,7 @@ static void plat__rotate_into_page(void) {
 }
 
 PLAT_FN void plat_flip(void) {
+    if (plat__off) { usleep(60000); return; }                  // the screen is off: do not draw
     if (plat__rot) plat__rotate_into_page();
     struct fb_var_screeninfo pv = plat__v;
     pv.yoffset = plat__page * plat__v.yres;
@@ -151,6 +238,7 @@ PLAT_FN void plat_flip(void) {
 }
 
 PLAT_FN void plat_close(void) {
+    if (plat__off) plat__screen_set(0);                        // never leave the phone with its screen off
     struct fb_var_screeninfo z = plat__v; z.yoffset = 0;
     ioctl(plat__fd, FBIOPAN_DISPLAY, &z);
     if (plat__bl_old >= 0) {                                 // put the backlight back
@@ -180,13 +268,17 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
         memset(abs, 0, sizeof abs); memset(key, 0, sizeof key);
         ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abs), abs);
         ioctl(fd, EVIOCGBIT(EV_KEY, sizeof key), key);
+        char name[64] = "?"; ioctl(fd, EVIOCGNAME(sizeof name), name);
         int mt = plat__bit(abs, ABS_MT_POSITION_X) && plat__bit(abs, ABS_MT_POSITION_Y);
         int st = plat__bit(abs, ABS_X) && plat__bit(abs, ABS_Y) && plat__bit(key, BTN_TOUCH);
-        if (!mt && !st) { close(fd); continue; }
+        if (plat__bit(key, KEY_POWER) && plat__npwr < 4) {                  // a device with a power key: read it too
+            int d = dup(fd);
+            if (d >= 0) { plat__pwr_fd[plat__npwr++] = d; fprintf(stderr, "power key: %s (%s)\n", path, name); }
+        }
+        if ((!mt && !st) || plat__tfd >= 0) { close(fd); continue; }       // not a touchscreen, or we already have one
         struct input_absinfo ax, ay;
         ioctl(fd, EVIOCGABS(mt ? ABS_MT_POSITION_X : ABS_X), &ax);
         ioctl(fd, EVIOCGABS(mt ? ABS_MT_POSITION_Y : ABS_Y), &ay);
-        char name[64] = "?"; ioctl(fd, EVIOCGNAME(sizeof name), name);
         fprintf(stderr, "touch: %s (%s) %s x %d..%d y %d..%d\n", path, name, mt ? "multitouch" : "single",
                 ax.minimum, ax.maximum, ay.minimum, ay.maximum);
         plat__tfd = fd; plat__mt = mt;
@@ -197,13 +289,14 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
           if (e) v = atoi(e); else { FILE *f = fopen("/data/local/tmp/plat_touch", "r"); if (f) { if (fscanf(f, "%d", &v) != 1) v = 0; fclose(f); } }
           plat__tflip = v; }
         if (plat__tportrait) fprintf(stderr, "touch panel is portrait-native: flip bits %d\n", plat__tflip);
-        return 0;
     }
-    fprintf(stderr, "no touchscreen found in /dev/input\n");
-    return -1;
+    if (plat__tfd < 0) { fprintf(stderr, "no touchscreen found in /dev/input\n"); return -1; }
+    if (!plat__npwr) fprintf(stderr, "no power key found: the power button cannot turn the screen off\n");
+    return 0;
 }
 
 PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
+    plat__sync_flag(); plat__power_events(1);
     struct input_event ev[64];
     for (;;) {
         ssize_t n = read(plat__tfd, ev, sizeof ev);
@@ -239,6 +332,7 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
         }
     }
     int cnt = 0;
+    if (plat__off || plat__now() - plat__wake_t < 0.4) return 0;         // the screen is off (or just came on): no touches, so a press in a pocket does nothing
     for (int s = 0; s < PLAT_NSLOT && cnt < max; s++) {
         if (!plat__slots[s].active) continue;
         out[cnt].id = s;
@@ -265,5 +359,5 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
 }
 
 // For a launcher that waits on a child program. Nothing to refresh on Android.
-PLAT_FN void plat_keepalive(void) {}
+PLAT_FN void plat_keepalive(void) { plat__sync_flag(); plat__power_events(0); }
 PLAT_FN void plat_emergency_cleanup(void) {}           // nothing to clean up: the display is the plain framebuffer

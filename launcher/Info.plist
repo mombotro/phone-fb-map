@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>en</string>
-	<key>CFBundleDisplayName</key><string>FB Tools</string>
-	<key>CFBundleName</key><string>FB Tools</string>
+	<key>CFBundleDisplayName</key><string>momOSX</string>
+	<key>CFBundleName</key><string>momOSX</string>
 	<key>CFBundleExecutable</key><string>FBTools</string>
 	<key>CFBundleIdentifier</key><string>com.local.fbtools</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>

@@ -68,8 +68,14 @@ static void ui_fit(char *dst, size_t n, const char *src, int cols) {
 // A button. Pressed look while the finger is down on it. Returns 1 when it was tapped.
 static int ui_button(Ui *u, int x, int y, int w, int h, const char *label, uint32_t color) {
     int pressed = u->down && ui_inside(u->start_x, u->start_y, x, y, w, h) && ui_inside(u->x, u->y, x, y, w, h);
-    draw_rect(u->s, x, y, w, h, pressed ? 0x5A80B8 : color);
     int len = (int)strlen(label), sc = len * 16 <= w - 8 ? 2 : 1;
+    if (u->s->theme) {                                              // palmtop look: a thick ink outline, paper inside, inverted while pressed
+        draw_rect(u->s, x, y, w, h, 0xFFFFFF);
+        draw_rect(u->s, x + 3, y + 3, w - 6, h - 6, pressed ? 0xFFFFFF : 0x000000);
+        draw_rect(u->s, x, y, 3, 3, 0x000000); draw_rect(u->s, x + w - 3, y, 3, 3, 0x000000);                 // notched corners
+        draw_rect(u->s, x, y + h - 3, 3, 3, 0x000000); draw_rect(u->s, x + w - 3, y + h - 3, 3, 3, 0x000000);
+        (void)color;
+    } else draw_rect(u->s, x, y, w, h, pressed ? 0x5A80B8 : color);
     draw_text(u->s, x + (w - len * 8 * sc) / 2, y + (h - 16 * sc) / 2, sc, label, 0xFFFFFF);
     return ui_tapped_in(u, x, y, w, h);
 }

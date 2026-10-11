@@ -33,12 +33,59 @@ def get_json(url, token):
     return json.load(urllib.request.urlopen(req, timeout=25))
 
 
-def sign_in(invite_file):
-    url = open(invite_file).read().strip()
-    key = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("key", [None])[0]
-    if not key:
-        sys.exit("the invite file has no key= part")
-    return post_json(SIGNALING + "/join", {"key": key}, {"x-longhouse-refresh": "1"})
+def invite_key(text):
+    """The 64-hex key from an invite link (or the bare key)."""
+    text = text.strip()
+    import re
+    if re.fullmatch(r"[0-9a-f]{64}", text): return text
+    key = urllib.parse.parse_qs(urllib.parse.urlparse(text).query).get("key", [None])[0]
+    if not key or not re.fullmatch(r"[0-9a-f]{64}", key):
+        raise ValueError("that is not a Longhouse invite link (it needs a key= part)")
+    return key
+
+
+def sign_in(invite_text, home):
+    """Sign in with an invite. Returns (session dict, names dict). Raises ValueError with a plain message on failure."""
+    key = invite_key(invite_text)
+    if not home.startswith("http://"): raise ValueError("the home-node address must look like http://192.168.1.20:8787")
+    try:
+        body = post_json(SIGNALING + "/join", {"key": key}, {"x-longhouse-refresh": "1"})
+    except urllib.error.HTTPError as e:
+        raise ValueError("Longhouse refused the invite (%d). Was it revoked or replaced?" % e.code)
+    except (urllib.error.URLError, OSError) as e:
+        raise ValueError("cannot reach Longhouse: %s" % e)
+    seat = body.get("seat", {})
+    if seat.get("role") != "person": raise ValueError("the invite is not a person seat")
+    try:
+        roster = get_json(SIGNALING + "/roster", body["token"])
+    except (urllib.error.URLError, OSError):
+        roster = {"persons": []}
+    names = {p["id"]: p.get("displayName") or p["id"][:8] for p in roster.get("persons", []) if "id" in p}
+    import socket
+    try: sig_ip = socket.gethostbyname(urllib.parse.urlparse(SIGNALING).hostname)      # the phone cannot look names up, so it gets the number
+    except OSError: sig_ip = ""
+    session = {"home": home, "signaling": SIGNALING, "signalingIp": sig_ip, "token": body["token"], "refreshSecret": body.get("refreshSecret", ""),
+               "personId": seat.get("personId"), "homeId": seat.get("homeId"), "displayName": seat.get("displayName"),
+               "signedInAt": int(time.time()), "validSeconds": 86400}
+    return session, names
+
+
+def device_folder(dev):
+    return ("/var/root" if dev.kind == "ios" else "/data/local/tmp") + "/data/longhouse"
+
+
+def push_to_device(dev, session, names):
+    """Put session.json (readable by root only) and directory.json on a phone, through temporary files that are deleted at once."""
+    folder = device_folder(dev)
+    dev.mkdir(folder)
+    for name, data in (("session.json", session), ("directory.json", {"names": names})):
+        fd, tmp = tempfile.mkstemp(suffix=".json"); os.chmod(tmp, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f: json.dump(data, f)
+            dev.put_file(tmp, folder + "/" + name, 0o600)
+        finally:
+            try: os.unlink(tmp)
+            except OSError: pass
 
 
 def main():
@@ -51,56 +98,25 @@ def main():
     home_file = os.path.join(PRIVATE, "longhouse_home.txt")
     if not a.home: a.home = os.environ.get("LONGHOUSE_HOME", "")
     if not a.home and os.path.exists(home_file): a.home = open(home_file).read().strip()
-    if not a.home.startswith("http://"):
-        sys.exit("give the home-node address with --home http://IP:8787 (it is saved for next time)")
     os.makedirs(PRIVATE, exist_ok=True)
-    with open(home_file, "w") as f: f.write(a.home + "\n")
-
     try:
-        body = sign_in(a.invite)
-    except (urllib.error.URLError, OSError) as e:
+        session, names = sign_in(open(a.invite).read(), a.home)
+    except (ValueError, OSError) as e:
         sys.exit("sign-in failed: %s" % e)
-    seat = body.get("seat", {})
-    if seat.get("role") != "person":
-        sys.exit("the invite is not a person seat")
-    try:
-        directory = get_json(SIGNALING + "/roster", body["token"])
-    except (urllib.error.URLError, OSError) as e:
-        print("warning: could not fetch the roster (%s). Names will show as ids." % e)
-        directory = {"persons": [], "homes": []}
-    names = {p["id"]: p.get("displayName") or p["id"][:8] for p in directory.get("persons", []) if "id" in p}
-    import socket
-    try:
-        sig_ip = socket.gethostbyname(urllib.parse.urlparse(SIGNALING).hostname)             # the phone cannot look names up, so it gets the number
-    except OSError:
-        sig_ip = ""
-    session = {"home": a.home, "signaling": SIGNALING, "signalingIp": sig_ip, "token": body["token"], "refreshSecret": body.get("refreshSecret", ""),
-               "personId": seat.get("personId"), "homeId": seat.get("homeId"), "displayName": seat.get("displayName"),
-               "signedInAt": int(time.time()), "validSeconds": 86400}
-    os.makedirs(PRIVATE, exist_ok=True)
-    paths = {}
+    with open(home_file, "w") as f: f.write(a.home + "\n")
     for name, data in (("session.json", session), ("directory.json", {"names": names})):
-        p = os.path.join(PRIVATE, "longhouse_" + name)
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(os.path.join(PRIVATE, "longhouse_" + name), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f: json.dump(data, f)
-        paths[name] = p
     print("signed in as %s. %d people in the directory. Files written in research/." % (session["displayName"], len(names)))
-    if a.no_push:
-        return
-
+    if a.no_push: return
     sys.path.insert(0, HERE)
     import phonefiles_gui as pf
     devices = [d for d in pf.refresh_devices() if a.device in d.id]
-    if not devices:
-        sys.exit("no phone found. Plug one in, or use --no-push.")
+    if not devices: sys.exit("no phone found. Plug one in, or use --no-push.")
     for d in devices:
-        base = "/var/root" if d.kind == "ios" else "/data/local/tmp"
-        folder = base + "/data/longhouse"
         try:
-            d.mkdir(folder)
-            for name, p in paths.items():
-                d.put_file(p, folder + "/" + name, 0o666)
-            print("copied to %s (%s): %s" % (d.name, d.id.split(":")[0], folder))
+            push_to_device(d, session, names)
+            print("copied to %s (%s): %s" % (d.name, d.id.split(":")[0], device_folder(d)))
         except Exception as e:
             print("failed on %s: %s" % (d.name, e))
 

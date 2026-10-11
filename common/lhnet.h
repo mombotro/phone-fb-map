@@ -199,6 +199,38 @@ static const char *lh_json_string_value(const char *text, const char *key, size_
     *len = (size_t)(e - p); return p;
 }
 
+// One HTTPS request with "Connection: close". bearer may be NULL. Returns the status (0 on a network error); *out is malloc'ed text.
+static int lh_https(const char *host, const char *method, const char *path, const char *bearer, const char *body, unsigned long epoch, char **out) {
+    *out = NULL;
+    LhConn *c = malloc(sizeof *c);
+    if (lh_tls_open(c, host, 443, epoch)) { free(c); return 0; }
+    size_t bl = body ? strlen(body) : 0, cap = bl + (bearer ? strlen(bearer) : 0) + strlen(path) + 400; char *req = malloc(cap);
+    int n = snprintf(req, cap, "%s %s HTTP/1.1\r\nHost: %s\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nConnection: close\r\n%s%s%sUser-Agent: fbtools-longhouse\r\n\r\n%s",
+                     method, path, host, bl, bearer ? "Authorization: Bearer " : "", bearer ? bearer : "", bearer ? "\r\n" : "", body ? body : "");
+    int rc = lh_tls_write(c, req, (size_t)n); free(req);
+    if (rc) { lh_close(c); free(c); return 0; }
+    size_t rcap = 16384, rn = 0; char *buf = malloc(rcap);
+    for (;;) {
+        if (rn + 4096 > rcap) { if (rcap > (2u << 20)) break; rcap *= 2; buf = realloc(buf, rcap); }
+        int r = br_sslio_read(&c->ioc, buf + rn, rcap - rn - 1);
+        if (r < 0) break;                                              // end of data (the server closed) or an error
+        rn += (size_t)r;
+    }
+    buf[rn] = 0; lh_close(c); free(c);
+    int status = (rn > 12 && !strncmp(buf, "HTTP/", 5)) ? atoi(buf + 9) : 0;
+    char *he = strstr(buf, "\r\n\r\n");
+    if (!status || !he) { snprintf(lh_err, sizeof lh_err, "no answer from the server"); free(buf); return 0; }
+    *he = 0; char *b = he + 4; size_t bn = rn - (size_t)(b - buf);
+    int chunked = 0; for (char *h = buf; *h; h++) if (!strncasecmp(h, "transfer-encoding: chunked", 26)) { chunked = 1; break; }
+    if (chunked) {                                                     // decode chunks: "<hex size>\r\n<data>\r\n" ... "0\r\n"
+        char *d = malloc(bn + 1); size_t o = 0; const char *p = b, *end = b + bn;
+        while (p < end) { char *e; unsigned long len = strtoul(p, &e, 16); while (e < end && *e != '\n') e++; if (e >= end) break; p = e + 1; if (!len) break; if (p + len > end) len = (unsigned long)(end - p); memcpy(d + o, p, len); o += len; p += len; if (p < end && *p == '\r') p++; if (p < end && *p == '\n') p++; }
+        d[o] = 0; *out = d;
+    } else { *out = malloc(bn + 1); memcpy(*out, b, bn); (*out)[bn] = 0; }
+    free(buf);
+    return status;
+}
+
 // Ask the home for the thumbnail of a message. conn must be an open WebSocket. Returns the JPEG bytes (malloc'ed) or NULL.
 static unsigned char *lh_get_thumbnail(LhConn *c, const char *home_id, const char *message_id, int rpc_no, size_t *jpeg_len) {
     char req[600]; char id[24]; snprintf(id, sizeof id, "rpc_%d", rpc_no);

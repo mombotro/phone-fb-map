@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
@@ -48,6 +49,7 @@ static const Tool TOOLS[] = {
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
     { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Console",   "text demo",           "Aa",  0xA58A3A, BASE "/condemo 20 2",          K_RUN },
+    { "Shut down", "turn the device off", "o|",  0x6A2A2A, "reboot -p",                   K_SHUTDOWN },
 #endif
 #ifdef __APPLE__
     { "Shut down", "turn the phone off",  "o|",  0x6A2A2A, "/sbin/halt",                  K_SHUTDOWN },
@@ -120,11 +122,11 @@ int main(int argc, char **argv) {
     // only show tools whose program is installed (the cart picker always shows, the Exit tile only outside kiosk mode)
     int shown[16], nshown = 0;
     for (int i = 0; i < N_ALL && nshown < 16; i++) {
-        if (TOOLS[i].kind == K_QUIT) { if (!kiosk) shown[nshown++] = i; continue; }
+        if (TOOLS[i].kind == K_QUIT) { if (!kiosk && (getenv("FB_SHOW_EXIT") || access(BASE "/show_exit", F_OK) == 0)) shown[nshown++] = i; continue; }       // shut down is the way out; Exit only if asked for
         if (kiosk && strstr(TOOLS[i].cmd, "/calib")) continue;               // a bad calibration would lock the user out
         char buf[512]; snprintf(buf, sizeof buf, "%s", TOOLS[i].cmd);
         char *sp = strchr(buf, ' '); if (sp) *sp = 0;
-        if (access(buf, X_OK) == 0) shown[nshown++] = i;
+        if (TOOLS[i].kind == K_SHUTDOWN || access(buf, X_OK) == 0) shown[nshown++] = i;     // the shut-down command is a system command, not one of our files
     }
 
     const int GAP = 20, COLS = 2, HDR = 130;
@@ -175,11 +177,12 @@ int main(int argc, char **argv) {
             if (tx >= bx && tx < bx + bw && ty >= 380 && ty < 560) {                 // YES
                 dirty = 0; state = S_MAIN;
                 int stride; uint32_t *px = plat_begin(&stride);
-                Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+                Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
                 draw_rect(&s, 0, 0, W, H, 0x000000);
                 draw_text(&s, GAP + 6, H / 2 - 16, 3, "Shutting down...", 0xFFFFFF);
                 plat_flip();
-                sync(); system("/sbin/halt");
+                sync();
+                for (int q = 0; q < N_ALL; q++) if (TOOLS[q].kind == K_SHUTDOWN) { system(TOOLS[q].cmd); break; }       // /sbin/halt on iPhone, "reboot -p" on Android
                 sleep(60);
             } else if (tx >= bx && tx < bx + bw && ty >= 600 && ty < 780) state = S_MAIN;     // CANCEL
             dirty = 3;
@@ -202,29 +205,35 @@ int main(int argc, char **argv) {
             if (scroll < 0) scroll = 0; if (scroll > max_scroll) scroll = max_scroll;
         }
 
+        { static int last_min = -1; time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); if (lt.tm_min != last_min) { last_min = lt.tm_min; dirty = 3; } }
         if (dirty > 0) {
             int stride; uint32_t *px = plat_begin(&stride);
-            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
             draw_rect(&s, 0, 0, W, H, 0x101820);
             if (state == S_MAIN) {
-                draw_text(&s, GAP + 6, 26, 4, "FB TOOLS", 0xFFFFFF);
-                draw_text(&s, GAP + 6, 88, 2, DEVICE_NAME ", drawing straight to the screen", 0x7788AA);
+                // title bar (ink) with the name and the time, like a palmtop; with the theme off it is the old dark header
+                draw_rect(&s, 0, 0, W, 92, 0x26303E);
+                draw_text(&s, GAP + 6, 26, 5, "momOSX", 0xFFFFFF);
+                { time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); char clock[8]; strftime(clock, sizeof clock, "%H:%M", &lt);
+                  draw_text(&s, W - GAP - 5 * 8 * 3 - 6, 30, 3, clock, 0xFFFFFF); }
                 for (int k = 0; k < nshown; k++) {
                     const Tool *t = &TOOLS[shown[k]];
                     int x = GAP + (k % COLS) * (tile_w + GAP), y = HDR + GAP + (k / COLS) * (tile_h + GAP);
-                    draw_rect(&s, x, y, tile_w, tile_h, t->color);
-                    draw_rect(&s, x, y + tile_h - 6, tile_w, 6, 0x000000);
-                    draw_text(&s, x + 20, y + 18, 5, t->glyph, 0xFFFFFF);
-                    draw_text(&s, x + 20, y + tile_h - 78, 3, t->label, 0xFFFFFF);
-                    draw_text(&s, x + 20, y + tile_h - 30, 1, t->sub, 0xDDDDDD);
-                }
-                if (cur && pressed == -2) {                                          // highlight the tile under the finger
-                    for (int k = 0; k < nshown; k++) {
-                        int x = GAP + (k % COLS) * (tile_w + GAP), y = HDR + GAP + (k / COLS) * (tile_h + GAP);
-                        if (down_x >= x && down_x < x + tile_w && down_y >= y && down_y < y + tile_h) {
-                            draw_rect(&s, x, y, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y + tile_h - 8, tile_w, 8, 0xFFFFFF);
-                            draw_rect(&s, x, y, 8, tile_h, 0xFFFFFF); draw_rect(&s, x + tile_w - 8, y, 8, tile_h, 0xFFFFFF);
-                        }
+                    int down = cur && pressed == -2 && down_x >= x && down_x < x + tile_w && down_y >= y && down_y < y + tile_h;
+                    int gl = (int)strlen(t->glyph), ll = (int)strlen(t->label), sl = (int)strlen(t->sub);
+                    if (s.theme) {                                           // an outlined tile: icon, then the name, then a small line
+                        draw_rect(&s, x, y, tile_w, tile_h, 0xFFFFFF);
+                        draw_rect(&s, x + 4, y + 4, tile_w - 8, tile_h - 8, down ? 0xFFFFFF : 0x000000);
+                        draw_text(&s, x + (tile_w - gl * 8 * 6) / 2, y + 16, 6, t->glyph, 0xFFFFFF);
+                        draw_text(&s, x + (tile_w - ll * 8 * 3) / 2, y + tile_h - 74, 3, t->label, 0xFFFFFF);
+                        draw_text(&s, x + (tile_w - sl * 8) / 2, y + tile_h - 28, 1, t->sub, 0x8899AA);
+                    } else {
+                        draw_rect(&s, x, y, tile_w, tile_h, t->color);
+                        draw_rect(&s, x, y + tile_h - 6, tile_w, 6, 0x000000);
+                        draw_text(&s, x + 20, y + 18, 5, t->glyph, 0xFFFFFF);
+                        draw_text(&s, x + 20, y + tile_h - 78, 3, t->label, 0xFFFFFF);
+                        draw_text(&s, x + 20, y + tile_h - 30, 1, t->sub, 0xDDDDDD);
+                        if (down) { draw_rect(&s, x, y, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y + tile_h - 8, tile_w, 8, 0xFFFFFF); draw_rect(&s, x, y, 8, tile_h, 0xFFFFFF); draw_rect(&s, x + tile_w - 8, y, 8, tile_h, 0xFFFFFF); }
                     }
                 }
             } else if (state == S_SHUT) {

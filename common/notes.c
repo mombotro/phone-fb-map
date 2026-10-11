@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
         dirty--;
 
         int stride; uint32_t *px = plat_begin(&stride);
-        Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
+        Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
         u.s = &s; u.W = W; u.H = H;
         draw_rect(&s, 0, 0, W, H, 0x10161E);
         draw_rect(&s, 0, 0, W, BAR, 0x26303E);
