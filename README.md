@@ -17,11 +17,12 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `fbshell` | A shell with an on-screen keyboard. | iPhone 4, Nexus 4 |
 | `calib` | Measures the touch axes. It writes the result to a file. | iPhone 4 |
 | `tic80` | A TIC-80 player for `.tic` and `.lua` carts, with sound. | iPhone 4 |
-| `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. | iPhone 4 |
+| `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. On Android it plays through the system MediaPlayer. | iPhone 4, LG Intuition |
 | `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
 | `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |
 | `timer` | A stopwatch, a countdown timer, and an alarm clock. The timer and the alarm ring while the program runs. The alarm wakes a blank screen. | iPhone 4, Nexus 4, LG Intuition |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
+| `Phone Files` | A Mac app. It shows the files on a connected iPhone or Android phone. Drag files onto the window to copy them to the phone, and click a file to download it. | Mac to iPhone, Mac to Android |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |
 
 ## Build
@@ -58,6 +59,12 @@ The iPhone 5s (iOS 12, jailbroken with Chimera) runs the same programs as arm64 
 The deploy script signs the programs on the phone, because the Mac `ldid` is too old for iOS 12. Run a program with `run_ios12.sh PROGRAM` on the phone.
 SpringBoard stays frozen while the program runs, so a run lasts at most 100 seconds. There is no tweak or kiosk mode for the 5s yet.
 
+To copy files to and from a phone, build the Mac app with `tools/build_phonefiles_app.sh`, then open `tools/PhoneFiles.app`.
+It uses SSH for iPhones and `adb` for Android phones.
+
+To start an Android phone on the picker at boot, run `launcher/android_boot.sh on`. The picker then has no Exit tile and starts again if it stops.
+`adb` still works. Run `launcher/android_boot.sh off` to undo it. The phone needs root.
+
 Kiosk mode makes the phone boot straight into the picker with no way out to the home screen. See `launcher/kiosk.sh` and the device map.
 
 For music, copy a folder from your Mac with `python3 music/sync_music.py FOLDER`. Or build the Mac app with `music/build_droplet.sh`, then drop music files on it.
@@ -75,7 +82,7 @@ The device map has the exact commands for each device.
 | `android/fbdemo.c` | The Android framebuffer test program. |
 | `common/` | The platform layer, drawing, console, keyboard, terminal, the touch UI kit `ui.h`, and the programs above. |
 | `tic80/` | The TIC-80 player, its sound output, and the scripts that build it. |
-| `music/` | The music player, the sync script, and the Mac drop app. |
+| `music/` | The music player (iOS and Android), the sync scripts, and the Mac drop app. |
 | `tools/` | `phonefiles.py`, the file sync tool, and the build and deploy scripts for the iPhone 5s. |
 | `launcher/` | The app picker and the installer for its home-screen icon. |
 | `tweak/` | The SpringBoard tweak for long-running screen programs. |

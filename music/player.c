@@ -3,12 +3,11 @@
 // Top: folder list (drag to scroll, tap to open or play). Bottom: title, time, seek bar, prev/play/next, volume.
 #include "../common/plat.h"
 #include "../common/draw.h"
-#include "decode.h"
-#include <AudioToolbox/AudioToolbox.h>
 #include <dirent.h>
+#ifdef __APPLE__
 #include <execinfo.h>
+#endif
 #include <signal.h>
-#include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -17,8 +16,6 @@
 #include <unistd.h>
 
 #define PATH_MAX_LEN 1024
-#define BUF_FRAMES 4096
-#define N_BUFS 3
 
 static double now(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec + tv.tv_usec / 1e6; }
 
@@ -30,98 +27,26 @@ static void crash_handler(int sig) {
     void *bt[40];
     fprintf(stderr, "\n*** caught signal %d ***\n", sig); fflush(stderr);
     plat_emergency_cleanup();
+#ifdef __APPLE__
     int n = backtrace(bt, 40);
     backtrace_symbols_fd(bt, n, fileno(stderr));
+#else
+    (void)bt;
+#endif
     _exit(128 + sig);
 }
 
 // ---------------------------------------------------------------- audio engine
-
-static struct {
-    OSStatus (*NewOutput)(const AudioStreamBasicDescription *, AudioQueueOutputCallback, void *, CFRunLoopRef, CFStringRef, UInt32, AudioQueueRef *);
-    OSStatus (*Alloc)(AudioQueueRef, UInt32, AudioQueueBufferRef *);
-    OSStatus (*Enqueue)(AudioQueueRef, AudioQueueBufferRef, UInt32, const AudioStreamPacketDescription *);
-    OSStatus (*Start)(AudioQueueRef, const AudioTimeStamp *);
-    OSStatus (*Pause)(AudioQueueRef);
-    OSStatus (*Stop)(AudioQueueRef, Boolean);
-    OSStatus (*Dispose)(AudioQueueRef, Boolean);
-    OSStatus (*SetParam)(AudioQueueRef, AudioQueueParameterID, AudioQueueParameterValue);
-} aq;
-
-static Dec *g_dec;
-static AudioQueueRef g_queue;
-static volatile int g_eof;                // decoder reached the end of the file
-static volatile long g_decoded;           // frames decoded so far (the audio thread updates it)
-static volatile long g_seek = -1;         // frame to seek to (the audio thread applies it)
-static int g_paused, g_rate, g_playing;
-static long g_total;
+// Two backends with the same functions: audio_ios.h (decoders + AudioQueue) and audio_android.h (a Java helper that
+// plays with the platform MediaPlayer). Both read g_volume and set g_playing, g_paused and g_eof.
 static float g_volume = 0.7f;
-
-static void fill_cb(void *user, AudioQueueRef q, AudioQueueBufferRef b) {
-    (void)user;
-    int16_t *out = b->mAudioData;
-    long frames = b->mAudioDataBytesCapacity / 4;
-    if (g_seek >= 0 && g_dec) { dec_seek(g_dec, g_seek); g_decoded = g_seek; g_seek = -1; g_eof = 0; }
-    long n = (g_eof || !g_dec) ? 0 : dec_read(g_dec, out, frames);
-    if (n < 0) n = 0;
-    if (n < frames) { memset(out + 2 * n, 0, (size_t)(frames - n) * 4); if (n == 0) g_eof = 1; }
-    g_decoded += n;
-    b->mAudioDataByteSize = (UInt32)(frames * 4);
-    aq.Enqueue(q, b, 0, NULL);
-}
-
-static int audio_load(void) {
-    void *at = dlopen("/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox", RTLD_NOW);
-    if (!at) return -1;
-    aq.NewOutput = dlsym(at, "AudioQueueNewOutput");
-    aq.Alloc = dlsym(at, "AudioQueueAllocateBuffer");
-    aq.Enqueue = dlsym(at, "AudioQueueEnqueueBuffer");
-    aq.Start = dlsym(at, "AudioQueueStart");
-    aq.Pause = dlsym(at, "AudioQueuePause");
-    aq.Stop = dlsym(at, "AudioQueueStop");
-    aq.Dispose = dlsym(at, "AudioQueueDispose");
-    aq.SetParam = dlsym(at, "AudioQueueSetParameter");
-    return (aq.NewOutput && aq.Alloc && aq.Enqueue && aq.Start && aq.Pause && aq.Stop && aq.Dispose && aq.SetParam) ? 0 : -1;
-}
-
-static void stop_audio(void) {
-    if (g_queue) { aq.Stop(g_queue, true); aq.Dispose(g_queue, true); g_queue = NULL; }
-    if (g_dec) { dec_close(g_dec); g_dec = NULL; }
-    g_playing = 0; g_paused = 0; g_eof = 0; g_decoded = 0; g_seek = -1;
-}
-
-// Open a file and start playing it. Returns 0 on success.
-static int play_file(const char *path) {
-    stop_audio();
-    g_dec = dec_open(path);
-    if (!g_dec) return -1;
-    g_rate = dec_rate(g_dec);
-    g_total = dec_total_frames(g_dec);
-    LOG("play %s: %d Hz, %ld frames (%.1f s)", path, g_rate, g_total, g_rate ? (double)g_total / g_rate : 0.0);
-
-    AudioStreamBasicDescription fmt;
-    memset(&fmt, 0, sizeof fmt);
-    fmt.mSampleRate = g_rate; fmt.mFormatID = kAudioFormatLinearPCM;
-    fmt.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
-    fmt.mChannelsPerFrame = 2; fmt.mBitsPerChannel = 16;
-    fmt.mBytesPerFrame = 4; fmt.mFramesPerPacket = 1; fmt.mBytesPerPacket = 4;
-    if (aq.NewOutput(&fmt, fill_cb, NULL, NULL, NULL, 0, &g_queue)) { stop_audio(); return -1; }
-    aq.SetParam(g_queue, kAudioQueueParam_Volume, g_volume);
-    for (int i = 0; i < N_BUFS; i++) {
-        AudioQueueBufferRef b = NULL;
-        if (aq.Alloc(g_queue, BUF_FRAMES * 4, &b) || !b) { stop_audio(); return -1; }
-        fill_cb(NULL, g_queue, b);
-    }
-    if (aq.Start(g_queue, NULL)) { stop_audio(); return -1; }
-    g_playing = 1;
-    return 0;
-}
-
-static double position_seconds(void) {
-    long p = g_decoded - (long)N_BUFS * BUF_FRAMES;           // audio still queued has not played yet
-    if (p < 0) p = 0;
-    return g_rate > 0 ? (double)p / g_rate : 0;
-}
+static int g_paused, g_playing;
+static volatile int g_eof;                // the file reached its end
+#ifdef __APPLE__
+#include "audio_ios.h"
+#else
+#include "audio_android.h"
+#endif
 
 // ---------------------------------------------------------------- library
 
@@ -252,7 +177,7 @@ int main(int argc, char **argv) {
     mkdir(g_root, 0755);
     snprintf(g_cwd, sizeof g_cwd, "%s", g_root);
 
-    if (audio_load()) { fprintf(stderr, "cannot load AudioToolbox\n"); return 1; }
+    if (audio_load()) { fprintf(stderr, "cannot start the audio engine\n"); return 1; }
     PlatInfo pi;
     if (plat_init(&pi) || plat_touch_init(&pi)) return 1;
     const int W = pi.w, H = pi.h;
@@ -260,7 +185,7 @@ int main(int argc, char **argv) {
     const int HDR = 64, ROW = 62, PANEL_Y = H - 400;
     const int LIST_Y0 = HDR, LIST_Y1 = PANEL_Y, LIST_H = LIST_Y1 - LIST_Y0;
     const int BAR_Y = PANEL_Y + 112, BAR_H = 40, BAR_X0 = 20, BAR_X1 = W - 20;
-    const int BTN_Y = PANEL_Y + 180, BTN_H = 100, VOL_Y = PANEL_Y + 300, VOL_H = 80;
+    const int CTL_Y = PANEL_Y + 180, CTL_H = 100, VOL_Y = PANEL_Y + 300, VOL_H = 80;
     const int COLS = (W - 24) / 16;
 
     scan_dir();
@@ -284,6 +209,7 @@ int main(int argc, char **argv) {
                 dirty = 3;
             }
         }
+        audio_poll();
         PlatTouch tc[10];
         int n = plat_touch_poll(tc, 10);
         int cur[16] = {0};
@@ -296,19 +222,19 @@ int main(int argc, char **argv) {
                 sy[id] = ly[id] = y; sx_[id] = x; moved[id] = 0; down_t[id] = t; zone[id] = Z_NONE;
                 if (y < HDR) { if (x > W - 130) quit = 1; }
                 else if (y < LIST_Y1) zone[id] = Z_LIST;
-                else if (y >= BAR_Y - 10 && y < BAR_Y + BAR_H + 10 && g_playing && g_total > 0) {
+                else if (y >= BAR_Y - 10 && y < BAR_Y + BAR_H + 10 && g_playing && audio_duration() > 0) {
                     zone[id] = Z_BAR;
                     double f = (double)(x - BAR_X0) / (BAR_X1 - BAR_X0); if (f < 0) f = 0; if (f > 1) f = 1;
-                    g_seek = (long)(f * g_total);
+                    audio_seek_fraction(f);
                     dirty = 3;
-                } else if (y >= BTN_Y && y < BTN_Y + BTN_H) {
+                } else if (y >= CTL_Y && y < CTL_Y + CTL_H) {
                     zone[id] = Z_BTN;
                     if (x < W / 3) {                                  // previous: restart if more than 3 s in
-                        if (g_playing && position_seconds() > 3) g_seek = 0;
+                        if (g_playing && position_seconds() > 3) audio_seek_fraction(0);
                         else if (g_pl_n) play_step(-1);
                         pressed_btn = 0;
                     } else if (x < 2 * W / 3) {                       // play / pause
-                        if (g_playing) { if (g_paused) aq.Start(g_queue, NULL); else aq.Pause(g_queue); g_paused = !g_paused; }
+                        if (g_playing) audio_set_paused(!g_paused);
                         else if (g_pl_n && g_pl_i >= 0) play_step(0);
                         pressed_btn = 1;
                     } else { if (g_pl_n) play_step(1); pressed_btn = 2; }
@@ -317,7 +243,7 @@ int main(int argc, char **argv) {
                     zone[id] = Z_BTN;
                     if (x < W / 3) g_volume -= 0.1f; else if (x >= 2 * W / 3) g_volume += 0.1f;
                     if (g_volume < 0) g_volume = 0; if (g_volume > 1) g_volume = 1;
-                    if (g_queue) aq.SetParam(g_queue, kAudioQueueParam_Volume, g_volume);
+                    audio_set_volume(g_volume);
                     pressed_btn = x < W / 3 ? 3 : (x >= 2 * W / 3 ? 4 : -1);
                     dirty = 3;
                 }
@@ -325,9 +251,9 @@ int main(int argc, char **argv) {
                 if (abs(y - sy[id]) > 14) moved[id] = 1;
                 if (moved[id]) { g_scroll -= y - ly[id]; dirty = 3; }
                 ly[id] = y;
-            } else if (zone[id] == Z_BAR && g_playing && g_total > 0 && abs(x - sx_[id]) > 6) {
+            } else if (zone[id] == Z_BAR && g_playing && audio_duration() > 0 && abs(x - sx_[id]) > 6) {
                 double f = (double)(x - BAR_X0) / (BAR_X1 - BAR_X0); if (f < 0) f = 0; if (f > 1) f = 1;
-                g_seek = (long)(f * g_total); sx_[id] = x; dirty = 3;
+                audio_seek_fraction(f); sx_[id] = x; dirty = 3;
             }
         }
         for (int id = 0; id < 16; id++) {
@@ -354,13 +280,13 @@ int main(int argc, char **argv) {
 
         // end of file: wait for the queued audio to play out, then go to the next file
         if (g_playing && g_eof) {
-            if (eof_t == 0) { eof_t = t; LOG("decoder reached end: decoded %ld of %ld frames, decoder error %d", (long)g_decoded, g_total, g_dec ? dec_error(g_dec) : 0); }
+            if (eof_t == 0) { eof_t = t; char info[160]; audio_end_info(info, sizeof info); LOG("reached end: %s", info); }
             else if (t - eof_t > 0.45) { eof_t = 0; if (play_step(1)) stop_audio(); dirty = 3; }
         } else eof_t = 0;
 
         double sec = g_playing ? position_seconds() : -1;
         static double next_beat = 0;
-        if (t >= next_beat) { next_beat = t + 5; LOG("heartbeat: playing=%d paused=%d pos=%.1fs decoded=%ld eof=%d", g_playing, g_paused, sec, (long)g_decoded, g_eof); }
+        if (t >= next_beat) { next_beat = t + 5; char info[160]; audio_info(info, sizeof info); LOG("heartbeat: playing=%d paused=%d pos=%.1fs %s", g_playing, g_paused, sec, info); }
         if ((int)sec != (int)last_sec) { last_sec = sec; dirty = 3; }
 
         if (dirty > 0) {
@@ -399,23 +325,22 @@ int main(int argc, char **argv) {
             draw_text(&s, 12, PANEL_Y + 16, 2, title, 0xFFFFFF);
             char tcur[16] = "0:00", ttot[16] = "0:00", tl[48];
             if (g_playing) fmt_time(tcur, sizeof tcur, sec);
-            if (g_playing && g_total > 0 && g_rate > 0) fmt_time(ttot, sizeof ttot, (double)g_total / g_rate);
+            if (g_playing && audio_duration() > 0) fmt_time(ttot, sizeof ttot, audio_duration());
             snprintf(tl, sizeof tl, "%s / %s%s", tcur, ttot, g_paused ? "  (paused)" : "");
             draw_text(&s, 12, PANEL_Y + 62, 2, tl, 0x99AABB);
 
             draw_rect(&s, BAR_X0, BAR_Y, BAR_X1 - BAR_X0, BAR_H, 0x2A3140);
-            if (g_playing && g_total > 0) {
-                double f = (double)(g_decoded - (long)N_BUFS * BUF_FRAMES) / g_total; if (f < 0) f = 0; if (f > 1) f = 1;
-                if (g_seek >= 0) f = (double)g_seek / g_total;
+            if (g_playing && audio_duration() > 0) {
+                double f = audio_fraction();
                 draw_rect(&s, BAR_X0, BAR_Y, (int)((BAR_X1 - BAR_X0) * f), BAR_H, 0x4C8DDB);
             }
 
             static const char *bl[3] = { "<<", "", ">>" };
             for (int b = 0; b < 3; b++) {
                 int x0 = b * W / 3 + 8, w = W / 3 - 16;
-                draw_rect(&s, x0, BTN_Y, w, BTN_H, pressed_btn == b ? 0x5A80B8 : 0x2A3850);
+                draw_rect(&s, x0, CTL_Y, w, CTL_H, pressed_btn == b ? 0x5A80B8 : 0x2A3850);
                 const char *lab = b == 1 ? (g_playing && !g_paused ? "PAUSE" : "PLAY") : bl[b];
-                draw_text(&s, x0 + (w - (int)strlen(lab) * 32) / 2, BTN_Y + (BTN_H - 32) / 2, 2 * 1, lab, 0xFFFFFF);
+                draw_text(&s, x0 + (w - (int)strlen(lab) * 32) / 2, CTL_Y + (CTL_H - 32) / 2, 2 * 1, lab, 0xFFFFFF);
             }
             draw_rect(&s, 8, VOL_Y, W / 3 - 16, VOL_H, pressed_btn == 3 ? 0x5A80B8 : 0x2A3850);
             draw_text(&s, 8 + (W / 3 - 16 - 48) / 2, VOL_Y + 24, 2, "VOL-", 0xFFFFFF);
@@ -433,6 +358,9 @@ int main(int argc, char **argv) {
     }
     LOG("exit: normal");
     stop_audio();
+#ifndef __APPLE__
+    audio_shutdown();
+#endif
     plat_close();
     return 0;
 }

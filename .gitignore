@@ -23,3 +23,8 @@ research/
 *.caf
 music/tone_ios
 *.ipa
+.playwright-mcp/
+tools/PhoneFiles.app/
+tools/fbls_android
+music/android/out/
+music/android/helper.jar

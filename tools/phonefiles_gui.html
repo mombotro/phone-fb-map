@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone Files</title>
+<style>
+  :root { --bg:#12161c; --panel:#1a212b; --line:#2a3340; --text:#e8ecf2; --dim:#8b97a8; --accent:#4c8ddb; --good:#3fb27f; --bad:#e0564c; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f4f6f9; --panel:#fff; --line:#d9dfe8; --text:#18202b; --dim:#667385; --accent:#2f6fc4; --good:#1f9467; --bad:#c9382e; } }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--text); font:14px -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  #app { display:grid; grid-template-columns:240px 1fr; height:100%; }
+  #side { background:var(--panel); border-right:1px solid var(--line); padding:14px 12px; overflow:auto; }
+  #side h2 { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:16px 6px 6px; }
+  .dev { padding:9px 10px; border-radius:8px; cursor:pointer; margin-bottom:4px; border:1px solid transparent; }
+  .dev:hover { background:rgba(127,127,127,.12); }
+  .dev.sel { border-color:var(--accent); background:rgba(76,141,219,.12); }
+  .dev b { display:block; font-size:14px; }
+  .dev small { color:var(--dim); display:block; margin-top:2px; }
+  .dev .st { font-size:12px; margin-top:3px; }
+  .ok { color:var(--good); } .warn { color:var(--bad); }
+  .place { padding:7px 10px; border-radius:6px; cursor:pointer; }
+  .place:hover { background:rgba(127,127,127,.12); }
+  .place.sel { background:rgba(76,141,219,.18); }
+  #main { display:flex; flex-direction:column; min-width:0; position:relative; }
+  #bar { display:flex; gap:8px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+  #crumbs { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--dim); }
+  #crumbs a { color:var(--text); cursor:pointer; text-decoration:none; }
+  #crumbs a:hover { color:var(--accent); }
+  button { font:inherit; color:var(--text); background:transparent; border:1px solid var(--line); border-radius:7px; padding:6px 12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger:hover { border-color:var(--bad); color:var(--bad); }
+  #list { flex:1; overflow:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-weight:500; font-size:12px; color:var(--dim); padding:8px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); }
+  td { padding:8px 14px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  td.name { width:100%; max-width:0; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  td.num { color:var(--dim); text-align:right; }
+  tr:hover td { background:rgba(127,127,127,.08); }
+  .acts button { padding:3px 8px; font-size:12px; margin-left:4px; }
+  .acts { text-align:right; }
+  #empty { padding:40px; color:var(--dim); text-align:center; }
+  #drop { position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(76,141,219,.22); border:3px dashed var(--accent); font-size:22px; z-index:5; pointer-events:none; }
+  #toast { position:fixed; right:16px; bottom:16px; display:flex; flex-direction:column; gap:8px; z-index:9; }
+  .t { background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:10px 14px; min-width:240px; max-width:420px; box-shadow:0 4px 18px rgba(0,0,0,.25); }
+  .t.err { border-left-color:var(--bad); }
+  .meter { height:5px; background:var(--line); border-radius:3px; margin-top:7px; overflow:hidden; }
+  .meter i { display:block; height:100%; width:0; background:var(--accent); }
+  #nodev { padding:50px; color:var(--dim); line-height:1.6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <h2>Devices</h2>
+    <div id="devs"></div>
+    <h2>Places</h2>
+    <div id="places"></div>
+  </div>
+  <div id="main">
+    <div id="bar">
+      <button id="up" title="Go up one folder">&#8593;</button>
+      <div id="crumbs"></div>
+      <button id="refresh">Refresh</button>
+      <button id="mkdir">New folder</button>
+      <button id="pick" class="primary">Upload files</button>
+      <input id="file" type="file" multiple hidden>
+    </div>
+    <div id="list"></div>
+    <div id="drop">Drop files or folders to copy them to this folder</div>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+const TOKEN = "__TOKEN__";
+let devices = [], dev = null, cwd = "/", entries = [];
+
+const $ = (id) => document.getElementById(id);
+const api = (p, o = {}) => fetch(p + (p.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOKEN), o);
+const qs = (o) => Object.entries(o).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+
+function toast(msg, err, ms) {
+  const d = document.createElement("div"); d.className = "t" + (err ? " err" : ""); d.textContent = msg;
+  $("toast").appendChild(d); setTimeout(() => d.remove(), ms || (err ? 7000 : 3000)); return d;
+}
+function size(n) { if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(1) + " KB"; if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB"; return (n / 1073741824).toFixed(2) + " GB"; }
+function when(t) { return t ? new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : ""; }
+function join(a, b) { return (a === "/" ? "" : a.replace(/\/$/, "")) + "/" + b; }
+function parent(p) { const i = p.replace(/\/$/, "").lastIndexOf("/"); return i <= 0 ? "/" : p.slice(0, i); }
+async function call(path, params, opts) {
+  const r = await api(path + "?" + qs(params), opts);
+  let j = null; try { j = await r.json(); } catch (e) { }
+  if (!r.ok) throw new Error((j && j.error) || ("error " + r.status));
+  return j;
+}
+
+async function loadDevices() {
+  try { devices = await call("/api/devices", {}); } catch (e) { toast(e.message, true); devices = []; }
+  const box = $("devs"); box.innerHTML = "";
+  if (!devices.length) box.innerHTML = '<div class="dev"><small>No phone found.<br>Plug one in, then click Refresh.</small></div>';
+  for (const d of devices) {
+    const el = document.createElement("div"); el.className = "dev" + (dev && dev.id === d.id ? " sel" : "");
+    const ready = d.status === "ready";
+    el.innerHTML = `<b>${esc(d.name)}</b><small>${esc(d.detail)}</small><div class="st ${ready ? "ok" : "warn"}">${esc(ready ? "Connected" : d.status)}</div>`;
+    el.onclick = () => selectDevice(d); box.appendChild(el);
+  }
+  if (!dev && devices.length) { const first = devices.find((d) => d.status === "ready") || devices[0]; selectDevice(first); }
+  if (dev && !devices.find((d) => d.id === dev.id)) { dev = null; entries = []; render(); $("places").innerHTML = ""; }
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function selectDevice(d) {
+  dev = d; renderPlaces(); loadDevicesUi();
+  go(d.places[0].path);
+}
+function loadDevicesUi() { document.querySelectorAll(".dev").forEach((el, i) => el.classList.toggle("sel", devices[i] && dev && devices[i].id === dev.id)); }
+function renderPlaces() {
+  const box = $("places"); box.innerHTML = ""; if (!dev) return;
+  for (const p of dev.places) {
+    const el = document.createElement("div"); el.className = "place" + (cwd === p.path ? " sel" : ""); el.textContent = p.name;
+    el.onclick = () => go(p.path); box.appendChild(el);
+  }
+}
+
+async function go(path) {
+  if (!dev) return; cwd = path || "/"; renderPlaces();
+  $("list").innerHTML = '<div id="empty">Loading...</div>';
+  try { const r = await call("/api/ls", { dev: dev.id, path: cwd }); entries = r.entries; render(); }
+  catch (e) { entries = []; $("list").innerHTML = `<div id="empty">${esc(e.message)}<br><br><button id="mk2">Create this folder</button></div>`; crumbs(); const b = $("mk2"); if (b) b.onclick = async () => { await act("/api/mkdir", { path: cwd }); go(cwd); }; }
+}
+
+function crumbs() {
+  const c = $("crumbs"); c.innerHTML = "";
+  const parts = cwd.split("/").filter(Boolean);
+  const root = document.createElement("a"); root.textContent = (dev ? dev.name : "") + " /"; root.onclick = () => go("/"); c.appendChild(root);
+  let acc = "";
+  for (const p of parts) { acc += "/" + p; const here = acc; const a = document.createElement("a"); a.textContent = " " + p + " /"; a.onclick = () => go(here); c.appendChild(a); }
+}
+
+function render() {
+  crumbs();
+  const list = $("list");
+  if (!dev) { list.innerHTML = '<div id="nodev">Plug in a phone.<br>iPhones need a jailbreak with OpenSSH. Android phones need USB debugging, and root for most folders.</div>'; return; }
+  if (!entries.length) { list.innerHTML = '<div id="empty">This folder is empty.<br>Drop files here to copy them to the phone.</div>'; return; }
+  const t = document.createElement("table");
+  t.innerHTML = "<tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr>";
+  for (const e of entries) {
+    const tr = document.createElement("tr");
+    const isDir = e.type === "d";
+    tr.innerHTML = `<td class="name">${isDir ? "&#128193; " : "&#128196; "}${esc(e.name)}</td><td class="num">${isDir ? "" : size(e.size)}</td><td class="num">${when(e.mtime)}</td><td class="acts"></td>`;
+    tr.querySelector(".name").onclick = () => { if (isDir) go(join(cwd, e.name)); else download(e); };
+    const acts = tr.querySelector(".acts");
+    const mk = (label, fn, cls) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = (ev) => { ev.stopPropagation(); fn(); }; acts.appendChild(b); };
+    mk(isDir ? "Download .zip/.tar" : "Download", () => download(e));
+    mk("Rename", () => rename(e));
+    mk("Delete", () => del(e), "danger");
+    t.appendChild(tr);
+  }
+  list.innerHTML = ""; list.appendChild(t);
+}
+
+function download(e) {
+  const a = document.createElement("a");
+  a.href = "/api/download?" + qs({ dev: dev.id, path: join(cwd, e.name), t: TOKEN });
+  a.download = e.name; document.body.appendChild(a); a.click(); a.remove();
+  toast("Downloading " + e.name + (e.type === "d" ? " (this can take a while)" : ""));
+}
+async function act(path, body) {
+  try { await call(path, { dev: dev.id }, { method: "POST", body: JSON.stringify(body) }); return true; }
+  catch (e) { toast(e.message, true); return false; }
+}
+async function rename(e) {
+  const n = prompt("New name for " + e.name, e.name); if (!n || n === e.name || n.includes("/")) return;
+  if (await act("/api/rename", { from: join(cwd, e.name), to: join(cwd, n) })) go(cwd);
+}
+async function del(e) {
+  if (!confirm("Delete " + e.name + (e.type === "d" ? " and everything in it" : "") + " from the phone?\nThis cannot be undone.")) return;
+  if (await act("/api/delete", { path: join(cwd, e.name) })) { toast("Deleted " + e.name); go(cwd); }
+}
+$("mkdir").onclick = async () => {
+  const n = prompt("Name of the new folder"); if (!n || n.includes("/")) return;
+  if (await act("/api/mkdir", { path: join(cwd, n) })) go(cwd);
+};
+$("refresh").onclick = async () => { await loadDevices(); if (dev) go(cwd); };
+$("up").onclick = () => go(parent(cwd));
+$("pick").onclick = () => $("file").click();
+$("file").onchange = (ev) => { uploadFiles([...ev.target.files].map((f) => ({ file: f, rel: f.name }))); ev.target.value = ""; };
+
+// ---- uploads (files and folders)
+function uploadOne(item, base, meter, doneCb) {
+  return new Promise((resolve) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/upload?" + qs({ dev: dev.id, path: base, name: item.rel, t: TOKEN }));
+    x.upload.onprogress = (ev) => { if (ev.lengthComputable) meter(ev.loaded / ev.total); };
+    x.onload = () => { if (x.status === 200) resolve(true); else { let m = "upload failed"; try { m = JSON.parse(x.responseText).error; } catch (e) { } toast(item.rel + ": " + m, true); resolve(false); } };
+    x.onerror = () => { toast(item.rel + ": upload failed", true); resolve(false); };
+    x.send(item.file);
+  });
+}
+async function uploadFiles(items) {
+  if (!dev || !items.length) return;
+  const base = cwd, t = toast("Uploading...", false, 600000), bar = document.createElement("div"); bar.className = "meter"; bar.innerHTML = "<i></i>"; t.appendChild(bar);
+  let ok = 0;
+  for (let i = 0; i < items.length; i++) {
+    t.firstChild.textContent = `Uploading ${i + 1} of ${items.length}: ${items[i].rel}`;
+    if (await uploadOne(items[i], base, (f) => { bar.firstChild.style.width = Math.round(((i + f) / items.length) * 100) + "%"; })) ok++;
+  }
+  t.remove(); toast(`Copied ${ok} of ${items.length} file${items.length > 1 ? "s" : ""} to the phone`, ok !== items.length);
+  if (cwd === base) go(cwd);
+}
+async function readEntry(entry, prefix, out) {
+  if (entry.isFile) { await new Promise((res) => entry.file((f) => { out.push({ file: f, rel: prefix + f.name }); res(); }, res)); }
+  else if (entry.isDirectory) {
+    const r = entry.createReader(); let batch;
+    do { batch = await new Promise((res) => r.readEntries(res, () => res([]))); for (const e of batch) await readEntry(e, prefix + entry.name + "/", out); } while (batch.length);
+  }
+}
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; if (dev) $("drop").style.display = "flex"; });
+window.addEventListener("dragleave", (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; $("drop").style.display = "none"; } });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", async (e) => {
+  e.preventDefault(); dragDepth = 0; $("drop").style.display = "none";
+  if (!dev) { toast("Pick a phone first", true); return; }
+  const out = [], items = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (items.length) for (const en of items) await readEntry(en, "", out);
+  else for (const f of e.dataTransfer.files) out.push({ file: f, rel: f.name });
+  uploadFiles(out);
+});
+
+setInterval(() => api("/api/ping").catch(() => { }), 10000);
+api("/api/ping").catch(() => { });
+loadDevices();
+setInterval(() => { if (!document.hidden && !devices.length) loadDevices(); }, 8000);
+</script>
+</body>
+</html>

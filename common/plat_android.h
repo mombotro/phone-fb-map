@@ -199,3 +199,4 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
 
 // For a launcher that waits on a child program. Nothing to refresh on Android.
 PLAT_FN void plat_keepalive(void) {}
+PLAT_FN void plat_emergency_cleanup(void) {}           // nothing to clean up: the display is the plain framebuffer
