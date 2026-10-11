@@ -20,12 +20,14 @@ ANDROID_HOOK = "/system/etc/install-recovery-2.sh"
 ANDROID_HOOK_TEXT = "#!/system/bin/sh\n# FB Tools: start the app picker at boot (fbrun detaches itself)\n/data/local/tmp/fbrun -d -k -b 31536000 fblauncher\n"
 
 APPS = [
-    {"id": "paint", "name": "Paint", "desc": "Draw with your fingers.", "bin": "paint"},
+    {"id": "paint", "name": "Paint", "desc": "Draw with your fingers. Colors, brush sizes, undo, and save to a .bmp file.", "bin": "paint", "data": ["data/paint"]},
     {"id": "shell", "name": "Shell", "desc": "A terminal with an on-screen keyboard.", "bin": "fbshell"},
     {"id": "notes", "name": "Notes", "desc": "Notes and to-do lists.", "bin": "notes", "data": ["data/notes"]},
     {"id": "timer", "name": "Timer", "desc": "Stopwatch, countdown timer, and alarm.", "bin": "timer", "data": ["data/timer"]},
     {"id": "music", "name": "Music", "desc": "Play your music.", "bin": "musicplayer", "data": ["music"], "android_extra": ["musichelper.jar"]},
     {"id": "bible", "name": "Bible", "desc": "The American Standard Version. Read by book and chapter.", "bin": "bible", "data": ["data/bible"], "extra": ["data/bible/asv.txt"]},
+    {"id": "reader", "name": "Reader", "desc": "Read .txt and .epub books. Copy them to the books folder with Phone Files.", "bin": "reader", "data": ["data/books"]},
+    {"id": "pixel", "name": "Pixel", "desc": "Draw pixel art. Saves .pix files and .bmp pictures.", "bin": "pixel", "data": ["data/pixel"]},
     {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts.", "bin": "tic80", "data": ["carts"], "only": ["ios7"]},
     {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
@@ -211,7 +213,7 @@ def android_up(dev, log):
     b = PLATFORMS["android"]["base"]
     dev.sh("echo off > %s/fbboot_off" % b, timeout=15)                      # the boot loop stops when this exists
     ps = dev.adb("shell", "ps", timeout=15).stdout.decode(errors="replace").replace("\r", "")
-    names = ("fblauncher", "fbrun", "paint", "fbshell", "notes", "timer", "longhouse", "musicplayer", "condemo", "bars")
+    names = ("fblauncher", "fbrun", "paint", "fbshell", "notes", "timer", "longhouse", "bible", "reader", "pixel", "musicplayer", "condemo", "bars")
     pids = [ln.split()[1] for ln in ps.splitlines() if ln.split() and ln.split()[-1].split("/")[-1] in names and len(ln.split()) > 1]
     for pid in pids:                                   # the picker AND the tools it started: a running program cannot be overwritten
         dev.sh("kill %s" % pid, timeout=15)
@@ -377,11 +379,11 @@ def do_uninstall(dev, plat, remove_data, log):
     if plat == "ios7":
         log("Turning off kiosk mode and removing the icon...")
         dev.sh("touch /var/root/kiosk_off; rm -f /var/mobile/fbkiosk_on; launchctl unload /Library/LaunchDaemons/com.local.fbkiosk.plist 2>/dev/null; "
-               "rm -f /Library/LaunchDaemons/com.local.fbkiosk.plist; for n in fblauncher paint tic80 musicplayer fbshell calib condemo notes timer; do killall $n >/dev/null 2>&1; done; sleep 2; "
+               "rm -f /Library/LaunchDaemons/com.local.fbkiosk.plist; for n in fblauncher paint tic80 musicplayer fbshell calib condemo notes timer longhouse bible reader pixel; do killall $n >/dev/null 2>&1; done; sleep 2; "
                "/var/root/fbreset 2>/dev/null; rm -rf /Applications/FBTools.app; su mobile -c uicache", timeout=90)
     elif plat == "ios12":
         log("Removing the icon...")
-        dev.sh("for n in fblauncher paint musicplayer fbshell calib notes timer; do killall $n >/dev/null 2>&1; done; rm -rf /Applications/FBTools.app; uicache -a", timeout=90)
+        dev.sh("for n in fblauncher paint musicplayer fbshell calib notes timer longhouse bible reader pixel; do killall $n >/dev/null 2>&1; done; rm -rf /Applications/FBTools.app; uicache -a", timeout=90)
         if m.get("tweak", True):
             log("Removing the FB Tools tweak and its loader, then restarting SpringBoard...")
     else:

@@ -33,22 +33,26 @@ typedef struct { const char *label, *sub, *glyph; uint32_t color; const char *cm
 
 static const Tool TOOLS[] = {
 #ifdef __APPLE__
-    { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600",            K_RUN },
+    { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600 " BASE "/data/paint", K_RUN },
     { "Shell",     "terminal + keyboard", ">_",  0x3AA56E, BASE "/fbshell 3600 2",        K_RUN },
     { "TIC-80",    "pick a game cart",    "80",  0xA53A4E, BASE "/tic80",                 K_CARTS },
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
     { "Bible",     "American Standard",   "+",   0x7A5A3A, BASE "/bible 86400 " BASE "/data/bible/asv.txt", K_RUN },
+    { "Reader",    "txt + epub books",    "Bk",  0x5A7A3A, BASE "/reader 86400 " BASE "/data/books", K_RUN },
+    { "Pixel",     "pixel art editor",    "::",  0xA53A8A, BASE "/pixel 86400 " BASE "/data/pixel", K_RUN },
     { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Calibrate", "fix touch axes",      "+",   0x6E3AA5, BASE "/calib",                 K_RUN },
 #else
-    { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600",            K_RUN },
+    { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600 " BASE "/data/paint", K_RUN },
     { "Shell",     "terminal + keyboard", ">_",  0x3AA56E, BASE "/fbshell 3600 2",        K_RUN },
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
     { "Bible",     "American Standard",   "+",   0x7A5A3A, BASE "/bible 86400 " BASE "/data/bible/asv.txt", K_RUN },
+    { "Reader",    "txt + epub books",    "Bk",  0x5A7A3A, BASE "/reader 86400 " BASE "/data/books", K_RUN },
+    { "Pixel",     "pixel art editor",    "::",  0xA53A8A, BASE "/pixel 86400 " BASE "/data/pixel", K_RUN },
     { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Console",   "text demo",           "Aa",  0xA58A3A, BASE "/condemo 20 2",          K_RUN },
     { "Shut down", "turn the device off", "o|",  0x6A2A2A, "reboot -p",                   K_SHUTDOWN },

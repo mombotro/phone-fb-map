@@ -13,7 +13,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 
 | Program | What it does | Devices |
 |---|---|---|
-| `paint` | Multitouch paint. It tests display and touch together. | iPhone 4, Nexus 4, LG Intuition |
+| `paint` | Finger painting with 10 colors, 3 brush sizes, an eraser, undo, and SAVE to a `.bmp` file. Every finger paints, so it also tests multitouch. | iPhone 4, Nexus 4, LG Intuition |
 | `condemo` | A scrolling text console. | iPhone 4, Nexus 4 |
 | `fbshell` | A shell with an on-screen keyboard. | iPhone 4, Nexus 4 |
 | `calib` | Measures the touch axes. It writes the result to a file. | iPhone 4 |
@@ -24,6 +24,8 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `timer` | A stopwatch, a countdown timer, and an alarm clock. The timer and the alarm ring while the program runs. The alarm wakes a blank screen. | iPhone 4, Nexus 4, LG Intuition |
 | `longhouse` | A chat client for the Longhouse family chat. It reads and sends text over the home Wi-Fi, and shows picture thumbnails. Full-size pictures and video are not possible. | iPhone 4, Intuition, Kindle Fire |
 | `bible` | Reads the American Standard Version Bible by book and chapter, with three text sizes. The text is not in this repository. Run `tools/make_bible.py` on an ASV HTML package (the `asv` folder) before `tools/build_payload.sh`, then add the Bible app in Phone Files. | Kindle Fire |
+| `reader` | Reads `.txt` and `.epub` books from a folder. It has a library list, three text sizes, page buttons, a progress bar you can tap, and it remembers your place in each book. PDF is not supported. | Kindle Fire |
+| `pixel` | A pixel art editor: 16, 32, or 48 pixels square, 16 colors, pen, fill, color pick, and undo. It saves `.pix` files and `.bmp` pictures. | Kindle Fire |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
 | `Phone Files` | A Mac app. It shows the files on a connected iPhone or Android phone. Drag files onto the window to copy them to the phone, and click a file to download it. | Mac to iPhone, Mac to Android |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |

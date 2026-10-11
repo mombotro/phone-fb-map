@@ -107,6 +107,7 @@ The touch panel has portrait axes, and the code handles that. Set `/data/local/t
 | App picker | Works | |
 | Paint, Notes, Timer | Works | |
 | Bible (ASV), momPKT power menu | Works | Book, chapter, and text size. The power menu has Restart and Shut down. |
+| Reader (txt and epub), Pixel art, Paint with colors and save | Works | Reader keeps your place in each book. PDF is not supported. |
 | Settings drop-down: Wi-Fi switch, sound, brightness, portrait or landscape | Works | Tap the name momPKT. Landscape turns the touch points too. |
 | Settings drop-down: Bluetooth switch | No | The Kindle has no Bluetooth rfkill entry. The switch shows n/a. |
 | Alarm sound | Works | A looped WAV file, played by the Java helper. |
