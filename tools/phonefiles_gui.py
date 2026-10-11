@@ -76,6 +76,7 @@ class PhoneError(Exception):
 class IOS:
     kind = "ios"
     places = [("Home", "/var/root"), ("Notes", "/var/root/data/notes"), ("Music", "/var/root/music"),
+              ("Books", "/var/root/data/books"), ("Paint pictures", "/var/root/data/paint"), ("Pixel art", "/var/root/data/pixel"),
               ("Carts", "/var/root/carts"), ("All app data", "/var/root/data")]
     zones = ["/var/root/data", "/var/root/music", "/var/root/carts"]
 
@@ -234,6 +235,7 @@ class IOS:
 class Android:
     kind = "android"
     places = [("App files", ANDROID_TMP), ("Notes", ANDROID_TMP + "/data/notes"), ("Music", ANDROID_TMP + "/music"),
+              ("Books", ANDROID_TMP + "/data/books"), ("Paint pictures", ANDROID_TMP + "/data/paint"), ("Pixel art", ANDROID_TMP + "/data/pixel"),
               ("Carts", ANDROID_TMP + "/carts"), ("Internal storage", "/sdcard")]
     zones = [ANDROID_TMP + "/data", ANDROID_TMP + "/music", ANDROID_TMP + "/carts", "/sdcard"]
 
@@ -532,8 +534,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/download":
                 gen, fname, size = d.read_stream(path)
                 self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + urllib.parse.quote(fname))
+                kinds = {".bmp": "image/bmp", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif"}
+                ctype = kinds.get(os.path.splitext(fname)[1].lower()) if qs.get("inline", [""])[0] else None       # inline: show a picture in the page
+                self.send_header("Content-Type", ctype or "application/octet-stream")
+                self.send_header("Content-Disposition", ("inline" if ctype else "attachment") + "; filename*=UTF-8''" + urllib.parse.quote(fname))
                 if size is not None: self.send_header("Content-Length", str(size))
                 self.end_headers()
                 for b in gen: self.wfile.write(b)

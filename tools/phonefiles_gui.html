@@ -92,7 +92,7 @@
       <input id="file" type="file" multiple hidden>
     </div>
     <div id="list"></div>
-    <div id="note">&#128274; marks system and app files. Phone Files cannot delete, rename or overwrite them. Your notes, music, carts and app data can be changed.</div>
+    <div id="note">&#128274; marks system and app files. Phone Files cannot delete, rename or overwrite them. Your notes, books, pictures, music, carts and app data can be changed. Click a picture to see it.</div>
     <div id="drop">Drop files or folders to copy them to this folder</div>
   </div>
 </div>
@@ -175,7 +175,7 @@ function render() {
     const tr = document.createElement("tr");
     const isDir = e.type === "d";
     tr.innerHTML = `<td class="name">${isDir ? "&#128193; " : "&#128196; "}${esc(e.name)}${e.protected ? ' <span class="lock" title="System or app file: protected from changes here">&#128274;</span>' : ""}</td><td class="num">${isDir ? "" : size(e.size)}</td><td class="num">${when(e.mtime)}</td><td class="acts"></td>`;
-    tr.querySelector(".name").onclick = () => { if (isDir) go(join(cwd, e.name)); else download(e); };
+    tr.querySelector(".name").onclick = () => { if (isDir) go(join(cwd, e.name)); else if (/\.(bmp|png|jpe?g|gif)$/i.test(e.name)) preview(e); else download(e); };
     const acts = tr.querySelector(".acts");
     const mk = (label, fn, cls, locked) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; if (locked) { b.disabled = true; b.title = "Protected: system or app file"; } b.onclick = (ev) => { ev.stopPropagation(); fn(); }; acts.appendChild(b); };
     mk(isDir ? "Download .zip/.tar" : "Download", () => download(e));
@@ -186,6 +186,16 @@ function render() {
   list.innerHTML = ""; list.appendChild(t);
 }
 
+function preview(e) {                                    // a picture opens in a window; Download is still there
+  const src = "/api/download?" + qs({ dev: dev.id, path: join(cwd, e.name), t: TOKEN, inline: "1" });
+  const o = document.createElement("div");
+  o.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:50;padding:16px";
+  o.innerHTML = `<img src="${src}" alt="" style="max-width:92vw;max-height:76vh;image-rendering:pixelated;background:#fff;border-radius:6px"><div><button id="pv-dl">Download</button> <button id="pv-x">Close</button></div><div style="color:#fff">${esc(e.name)}</div>`;
+  o.onclick = (ev) => { if (ev.target === o) o.remove(); };
+  document.body.appendChild(o);
+  o.querySelector("#pv-x").onclick = () => o.remove();
+  o.querySelector("#pv-dl").onclick = () => download(e);
+}
 function download(e) {
   const a = document.createElement("a");
   a.href = "/api/download?" + qs({ dev: dev.id, path: join(cwd, e.name), t: TOKEN });

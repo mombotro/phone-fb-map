@@ -102,22 +102,25 @@ static int eb_dynamic(EbInfl *s) {
     if (err && (err < 0 || ndist != dc.count[0] + dc.count[1])) return -1;
     return eb_codes(s, &lc, &dc);
 }
-// Inflate `in` into `out` (outlen is the exact size from the ZIP directory). Returns 0 when the whole output was written.
-static int eb_inflate(const unsigned char *in, size_t inlen, unsigned char *out, size_t outlen) {
+// Inflate `in` into `out`. Returns 0 when the stream ended, 1 when `out` was too small (more data would follow), -1 on bad data.
+// *produced is the number of bytes written. For a ZIP file outlen is the exact size, and eb_inflate wants all of it.
+static int eb_inflate_ex(const unsigned char *in, size_t inlen, unsigned char *out, size_t outlen, size_t *produced) {
     EbInfl s; memset(&s, 0, sizeof s);
     s.in = in; s.inlen = inlen; s.out = out; s.outlen = outlen;
-    if (setjmp(s.env)) return -1;
+    *produced = 0;
+    if (setjmp(s.env)) { *produced = s.outcnt; return s.outcnt >= outlen - (outlen > 300 ? 300 : 0) ? 1 : -1; }   // out of input: a damaged tail, or out of room
     int last, err = 0;
     do {
         last = eb_bits(&s, 1);
         int type = eb_bits(&s, 2);
         if (type == 0) {
             s.bitbuf = 0; s.bitcnt = 0;
-            if (s.incnt + 4 > s.inlen) return -1;
+            if (s.incnt + 4 > s.inlen) { *produced = s.outcnt; return -1; }
             unsigned len = s.in[s.incnt] | (s.in[s.incnt + 1] << 8);
             unsigned nlen = s.in[s.incnt + 2] | (s.in[s.incnt + 3] << 8);
             s.incnt += 4;
-            if (len != (~nlen & 0xFFFF) || s.incnt + len > s.inlen || s.outcnt + len > s.outlen) return -1;
+            if (len != (~nlen & 0xFFFF) || s.incnt + len > s.inlen) { *produced = s.outcnt; return -1; }
+            if (s.outcnt + len > s.outlen) { *produced = s.outcnt; return 1; }
             memcpy(s.out + s.outcnt, s.in + s.incnt, len); s.incnt += len; s.outcnt += len;
         } else if (type == 1) {
             short lengths[320]; EbHuff lc, dc;
@@ -131,10 +134,15 @@ static int eb_inflate(const unsigned char *in, size_t inlen, unsigned char *out,
             eb_construct(&dc, lengths, 30);
             err = eb_codes(&s, &lc, &dc);
         } else if (type == 2) err = eb_dynamic(&s);
-        else return -1;
-        if (err) return -1;
+        else { *produced = s.outcnt; return -1; }
+        if (err) { *produced = s.outcnt; return s.outcnt >= s.outlen ? 1 : -1; }
     } while (!last);
-    return s.outcnt == outlen ? 0 : -1;
+    *produced = s.outcnt;
+    return 0;
+}
+static int eb_inflate(const unsigned char *in, size_t inlen, unsigned char *out, size_t outlen) {
+    size_t got; int r = eb_inflate_ex(in, inlen, out, outlen, &got);
+    return (r == 0 && got == outlen) ? 0 : -1;
 }
 
 // ---------------------------------------------------------------- ZIP directory
@@ -210,6 +218,16 @@ static void eb_put_cp(char **o, unsigned cp) {
     else if (cp == 0x2013 || cp == 0x2014 || cp == 0x2015 || cp == 0x2212) *p++ = '-';
     else if (cp == 0x2026) { *p++ = '.'; *p++ = '.'; *p++ = '.'; }
     else if (cp == 0x2022 || cp == 0xB7) *p++ = '*';
+    else if (cp == 0xA9) { *p++ = '('; *p++ = 'c'; *p++ = ')'; }
+    else if (cp == 0xAE) { *p++ = '('; *p++ = 'R'; *p++ = ')'; }
+    else if (cp == 0x2122) { *p++ = 'T'; *p++ = 'M'; }
+    else if (cp == 0xB0) { *p++ = 'o'; }
+    else if (cp == 0xB1) { *p++ = '+'; *p++ = '/'; *p++ = '-'; }
+    else if (cp == 0xBD) { *p++ = '1'; *p++ = '/'; *p++ = '2'; }
+    else if (cp == 0xBC) { *p++ = '1'; *p++ = '/'; *p++ = '4'; }
+    else if (cp == 0xBE) { *p++ = '3'; *p++ = '/'; *p++ = '4'; }
+    else if (cp == 0xD7) *p++ = 'x';
+    else if (cp == 0xF7) *p++ = '/';
     else if (cp == 0xAB) { *p++ = '<'; *p++ = '<'; }
     else if (cp == 0xBB) { *p++ = '>'; *p++ = '>'; }
     else if (cp >= 0xC0 && cp <= 0xFF) {                       // Latin-1 letters lose their marks

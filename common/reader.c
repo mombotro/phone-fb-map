@@ -1,4 +1,4 @@
-// reader.c - read .txt and .epub books, for the iOS and Android framebuffers.
+// reader.c - read .txt, .epub, and .pdf books, for the iOS and Android framebuffers.
 // usage: reader [seconds] [dir]      (default 86400 seconds, dir DATA/books)
 // Put the book files in the folder with Phone Files. The reader remembers where you stopped in each book.
 #include "plat.h"
@@ -6,6 +6,7 @@
 #include "kbd.h"
 #include "ui.h"
 #include "epub.h"
+#include "pdf.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -25,7 +26,7 @@ static char *text; static size_t tlen;
 typedef struct { int start, len; } Ln;
 static Ln *lines; static int nlines, lcap;
 
-static int has_book_ext(const char *n) { return eb_has_ext(n, ".txt") || eb_has_ext(n, ".epub") || eb_has_ext(n, ".md"); }
+static int has_book_ext(const char *n) { return eb_has_ext(n, ".txt") || eb_has_ext(n, ".epub") || eb_has_ext(n, ".pdf") || eb_has_ext(n, ".md"); }
 static int cmp_book(const void *a, const void *b) { return strcasecmp(((const BookRow *)a)->name, ((const BookRow *)b)->name); }
 
 // ---- where you stopped: one line "milli<TAB>file name" per book, in DIR/.pos
@@ -145,8 +146,8 @@ int main(int argc, char **argv) {
                 snprintf(buf, sizeof buf, "%s", books[i].name); char *dot = strrchr(buf, '.'); if (dot) *dot = 0;
                 char fit[128]; ui_fit(fit, sizeof fit, buf, (W - 40) / 16);
                 ui_label(&u, 16, y + 10, 2, fit, 0xF0F0F0);
-                snprintf(buf, sizeof buf, "%s  -  %s", eb_has_ext(books[i].name, ".epub") ? "EPUB" : "text", books[i].milli > 0 ? "" : "not started");
-                if (books[i].milli > 0) snprintf(buf, sizeof buf, "%s  -  read %d%%", eb_has_ext(books[i].name, ".epub") ? "EPUB" : "text", books[i].milli / 10);
+                snprintf(buf, sizeof buf, "%s  -  %s", eb_has_ext(books[i].name, ".epub") ? "EPUB" : eb_has_ext(books[i].name, ".pdf") ? "PDF" : "text", books[i].milli > 0 ? "" : "not started");
+                if (books[i].milli > 0) snprintf(buf, sizeof buf, "%s  -  read %d%%", eb_has_ext(books[i].name, ".epub") ? "EPUB" : eb_has_ext(books[i].name, ".pdf") ? "PDF" : "text", books[i].milli / 10);
                 ui_label(&u, 16, y + 50, 1, buf, 0x8899AA);
                 if (u.tapped && u.tap_y >= ly && ui_inside(u.tap_x, u.tap_y, 0, y, W, ROW)) {
                     u.tapped = 0; cur = i; loading = 1; dirty = 3;
@@ -154,7 +155,7 @@ int main(int argc, char **argv) {
             }
             if (!nbooks) {
                 ui_label(&u, 16, ly + 24, 2, "No books yet.", 0xF0F0F0);
-                ui_label(&u, 16, ly + 72, 1, "Copy .txt and .epub files to this folder with Phone Files:", 0x8899AA);
+                ui_label(&u, 16, ly + 72, 1, "Copy .txt, .epub, and .pdf files to this folder with Phone Files:", 0x8899AA);
                 ui_label(&u, 16, ly + 96, 1, dir, 0x8899AA);
             }
             if (status[0]) ui_label(&u, 16, H - 28, 1, status, 0xFF8888);
@@ -213,8 +214,9 @@ int main(int argc, char **argv) {
             ui_label(&u, 16, BAR + 40, 2, "Opening...", 0xFFFFFF);
             plat_flip();
             char path[512]; snprintf(path, sizeof path, "%s/%s", dir, books[cur].name);
-            free(text); text = book_load(path, &tlen);
-            if (!text || !tlen) { free(text); text = NULL; snprintf(status, sizeof status, "Cannot read %s", books[cur].name); }
+            free(text); pdf_error[0] = 0;
+            text = eb_has_ext(path, ".pdf") ? pdf_text(path, &tlen) : book_load(path, &tlen);
+            if (!text || !tlen) { free(text); text = NULL; snprintf(status, sizeof status, "%s: %s", books[cur].name, pdf_error[0] ? pdf_error : "cannot read it"); }
             else {
                 view = V_READ; laid_fs = 0; nlines = 0; sc_read.pos = 0;
                 int cols = (W - 24) / (8 * fs); layout(cols); laid_fs = fs;
