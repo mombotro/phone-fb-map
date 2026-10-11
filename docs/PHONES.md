@@ -55,9 +55,9 @@ The unit we tested on was restored to iOS 7.1.2 and now fails to activate with "
 | Boot straight into FB Tools | No | Chimera is semi-untethered. The phone starts without the jailbreak after every reboot. |
 | Shell | Unknown | Built, not tested. |
 | Music player, TIC-80 | No | Not built for 64-bit yet. |
-| Home-screen icon | Unknown | |
-| Phone Files (Mac app) | Unknown | Not run on this phone yet. |
-| FB Tools manager | Unknown | |
+| Home-screen icon | Unknown | The manager installs it (setuid stub, `uicache -a`). Nobody tapped it yet. |
+| Phone Files (Mac app) | Works | Browse, upload, download, rename, delete, and the protection of system files. Tested with scripts through the app's own API. Not yet tried by hand in the window. |
+| FB Tools manager | Works | Install, repair of a deleted and a corrupted file, and install over a broken state. Tested with scripts. Add and remove apps, mode changes, and uninstall: Unknown. |
 
 You must sign programs on the phone with `ldid` and the entitlements in `common/ios12.entitlements.plist`. The `ldid` on the Mac is too old.
 

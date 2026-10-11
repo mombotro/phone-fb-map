@@ -153,6 +153,39 @@ def remote_sizes(dev, plat, paths):
     return out
 
 
+def record_sizes(dev, plat, m):
+    """Remember, in the manifest, the size of each installed file on the phone (after signing, which adds bytes on iOS 12)
+    and the size of the copy in this app. Status and repair compare against these, so they notice damage and also
+    notice when this app carries a newer build."""
+    files = m.get("files", [])
+    remote = remote_sizes(dev, plat, files)
+    local = {}
+    for rel, rem, _ in expected_files(plat, m.get("apps", [])):
+        src = pl(plat, rel)
+        if os.path.exists(src): local[rem] = os.path.getsize(src)
+    m["sizes"] = {f: remote[f] for f in files if f in remote}
+    m["psizes"] = local
+
+
+def problems_for(dev, plat, m):
+    """(missing_or_changed, outdated) lists of (rel, remote, mode) for an installed phone."""
+    exp = expected_files(plat, m.get("apps", []))
+    have = remote_sizes(dev, plat, [r for _, r, _ in exp])
+    want, pwant = m.get("sizes", {}), m.get("psizes", {})
+    bad, old = [], []
+    for rel, remote, md in exp:
+        src = pl(plat, rel)
+        if not os.path.exists(src): continue
+        h = have.get(remote)
+        if plat == "ios12" and not want:        # signing changes the size, and no size was recorded: nothing can be trusted
+            bad.append((rel, remote, md, "not verified (no size record)")); continue
+        if h is None: bad.append((rel, remote, md, "missing"))
+        elif remote in want and h != want[remote]: bad.append((rel, remote, md, "changed (%d bytes, expected %d)" % (h, want[remote])))
+        elif remote not in want and plat != "ios12" and h != os.path.getsize(src): bad.append((rel, remote, md, "changed"))
+        elif remote in pwant and os.path.getsize(src) != pwant[remote]: old.append((rel, remote, md, "a newer build is in this app"))
+    return bad, old
+
+
 def android_up(dev, log):
     """Android's package manager only works while Android runs. The picker (kiosk) stops Android, so stop the picker first."""
     r = dev.sh("service check window", timeout=15).stdout.decode()
@@ -230,8 +263,6 @@ def apply_mode(dev, plat, mode, log):
             dev.sh("touch /var/root/kiosk_off; rm -f /var/mobile/fbkiosk_on /tmp/fbkiosk_wanted; launchctl unload /Library/LaunchDaemons/com.local.fbkiosk.plist 2>/dev/null; "
                    "rm -f /Library/LaunchDaemons/com.local.fbkiosk.plist", timeout=30)
         ios_respring(dev, log)
-    elif plat == "ios12":
-        pass
 
 
 # ---------------------------------------------------------------- actions
@@ -243,8 +274,11 @@ def copy_files(dev, plat, files, log):
             raise FBToolsError("missing in the payload: %s. Run tools/build_payload.sh and rebuild the app." % rel)
         log("  copy %s" % remote)
         dev.put_file(src, remote, mode)
-        if plat == "ios12" and rel.startswith("bin/") or (plat == "ios12" and rel == "run_ios12.sh" and False):
-            dev.sh("ldid -S%s/ios12.ent %s" % (PLATFORMS[plat]["base"], remote), timeout=30)
+    if plat == "ios12":                     # sign on the phone, after the entitlements file is there (the Mac ldid is too old)
+        for rel, remote, mode in files:
+            if rel.startswith("bin/"):
+                r = dev.sh("ldid -S%s/ios12.ent %s" % (PLATFORMS[plat]["base"], remote), timeout=30)
+                if r.returncode: raise FBToolsError("signing %s failed: %s" % (remote, r.stderr.decode(errors="replace").strip()))
 
 
 def data_dirs(plat, app_ids):
@@ -258,8 +292,6 @@ def do_install(dev, plat, mode, app_ids, log):
         if not dev.root: raise FBToolsError("This Android phone has no root. FB Tools needs root.")
         android_up(dev, log)
     log("Copying the FB Tools programs...")
-    if plat == "ios12":
-        pass
     copy_files(dev, plat, expected_files(plat, app_ids), log)
     for d in data_dirs(plat, app_ids):
         dev.sh("mkdir -p %s; chmod 777 %s" % (d, d), timeout=20)
@@ -268,6 +300,7 @@ def do_install(dev, plat, mode, app_ids, log):
     apply_mode(dev, plat, mode, log)
     m = read_manifest(dev, plat) or {}
     m.update({"version": 1, "platform": plat, "apps": app_ids, "mode": mode, "files": list(files)})
+    record_sizes(dev, plat, m)
     write_manifest(dev, plat, m)
     if mode == "boot":
         log("FB Tools starts at the next boot. Use 'Start now' to start it without a restart.")
@@ -316,18 +349,14 @@ def do_repair(dev, plat, log):
     app_ids = m.get("apps", []); mode = m.get("mode", "none")
     exp = expected_files(plat, app_ids)
     log("Checking %d files..." % len(exp))
-    sizes = remote_sizes(dev, plat, [r for _, r, _ in exp])
-    bad = []
-    for rel, remote, md in exp:
-        src = pl(plat, rel)
-        if not os.path.exists(src): raise FBToolsError("missing in the payload: %s" % rel)
-        have = sizes.get(remote)
-        if have is None: bad.append((rel, remote, md, "missing"))
-        elif have != os.path.getsize(src): bad.append((rel, remote, md, "wrong size (%d, expected %d)" % (have, os.path.getsize(src))))
-    if bad:
-        for rel, remote, md, why in bad: log("  %s: %s" % (remote, why))
-        log("Restoring %d file%s..." % (len(bad), "" if len(bad) == 1 else "s"))
-        copy_files(dev, plat, [(r, rem, md) for r, rem, md, _ in bad], log)
+    bad, old = problems_for(dev, plat, m)
+    if bad or old:
+        for rel, remote, md, why in bad + old: log("  %s: %s" % (remote, why))
+        log("Restoring %d file%s..." % (len(bad) + len(old), "" if len(bad) + len(old) == 1 else "s"))
+        copy_files(dev, plat, [(r, rem, md) for r, rem, md, _ in bad + old], log)
+        m["apps"] = app_ids
+        record_sizes(dev, plat, m)
+        write_manifest(dev, plat, m)
     else:
         log("All program files are in place.")
     b = PLATFORMS[plat]["base"]
@@ -336,9 +365,6 @@ def do_repair(dev, plat, log):
         dev.sh("mkdir -p %s; chmod 777 %s" % (d, d), timeout=20)
     for _, remote, md in exp:
         dev.sh("chmod %o %s" % (md, remote), timeout=15)
-    if plat == "ios12":
-        for rel, remote, md in exp:
-            if rel.startswith("bin/"): dev.sh("ldid -S%s/ios12.ent %s" % (b, remote), timeout=30)
     if plat == "android":
         dev.sh(dev.rmf(b + "/.pf_stage") + "; " + dev.rmf(b + "/.pf_up"), timeout=20)
         if mode == "boot": dev.sh(dev.rmf(b + "/fbboot_off"), timeout=15)         # a crash-loop shut-off must not stay on
@@ -376,6 +402,7 @@ def do_app(dev, plat, app_id, action, log):
         ids = [i for i in ids if i != app_id]
         files = set(m.get("files", [])) - {r for _, r, _ in app_files(plat, a)}
     m["apps"] = ids; m["files"] = sorted(files)
+    record_sizes(dev, plat, m)
     write_manifest(dev, plat, m)
     log("The picker shows only the apps that are installed. It looks again each time it starts.")
 
@@ -413,14 +440,9 @@ def status(dev):
     out = {"supported": True, "platform": plat, "label": info["label"], "modes": info["modes"], "installed": bool(m),
            "mode": m.get("mode") if m else None, "apps": apps, "payload_ok": os.path.exists(pl(plat, "bin/fblauncher")), "problems": []}
     if m:
-        exp = expected_files(plat, m.get("apps", []))
-        sizes = remote_sizes(dev, plat, [r for _, r, _ in exp])
-        for rel, remote, md in exp:
-            src = pl(plat, rel)
-            if os.path.exists(src):
-                have = sizes.get(remote)
-                if have is None: out["problems"].append("missing: " + remote)
-                elif have != os.path.getsize(src): out["problems"].append("changed: " + remote)
+        bad, old = problems_for(dev, plat, m)
+        out["problems"] = ["%s: %s" % (why, remote) for _, remote, _, why in bad]
+        out["updates"] = [remote for _, remote, _, _ in old]
     if plat == "ios12":
         out["note"] = "On this iPhone, FB Tools runs for about 2 minutes at a time. A tweak for long runs is not built yet. It cannot start at boot."
     return out

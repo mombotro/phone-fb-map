@@ -284,6 +284,7 @@ function renderFbt() {
   if (!st.payload_ok) h += `<div class="card warn">The programs for this phone are not in the app. Run tools/build_payload.sh, then tools/build_phonefiles_app.sh.</div>`;
   if (st.note) h += `<div class="card">${esc(st.note)}</div>`;
   if (st.problems.length) h += `<div class="card warn"><b>${st.problems.length} file${st.problems.length > 1 ? "s are" : " is"} missing or changed.</b><br><small>${st.problems.slice(0, 6).map(esc).join("<br>")}</small><div class="row"><button class="primary" id="b-repair">Repair</button></div></div>`;
+  if (st.updates && st.updates.length) h += `<div class="card"><b>A newer build of ${st.updates.length} program${st.updates.length > 1 ? "s is" : " is"} in this app.</b> Repair installs it.<div class="row"><button id="b-repair3">Update with Repair</button></div></div>`;
   h += "<h3>How FB Tools starts</h3><div class='card'>";
   const cur = st.installed ? st.mode : (window.pickedMode || (st.modes.includes("boot") ? "home" : "home"));
   for (const m of ["boot", "home", "none"]) {
@@ -309,7 +310,7 @@ function renderFbt() {
   const mode = () => (document.querySelector("input[name=mode]:checked") || {}).value || "none";
   on("b-install", () => runJob("install", { mode: mode(), apps: [...document.querySelectorAll(".pick:checked")].map((c) => c.value) }));
   on("b-mode", () => runJob("mode", { mode: mode() }));
-  on("b-repair", () => runJob("repair", {})); on("b-repair2", () => runJob("repair", {}));
+  on("b-repair3", () => runJob("repair", {})); on("b-repair", () => runJob("repair", {})); on("b-repair2", () => runJob("repair", {}));
   on("b-start", () => runJob("start", {}));
   on("b-uninst", () => { if (confirm("Remove FB Tools from this phone?" + ($("rmdata").checked ? "\n\nThis also DELETES your notes, music, and carts." : "\n\nYour notes, music, and carts stay."))) runJob("uninstall", { remove_data: $("rmdata").checked }); });
   box.querySelectorAll("[data-app]").forEach((b) => b.onclick = () => runJob("app", { id: b.dataset.app, action: b.dataset.act }));
