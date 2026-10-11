@@ -150,10 +150,11 @@ int main(int argc, char **argv) {
     enum { S_MAIN, S_CARTS, S_SHUT } state = S_MAIN;
     int scroll = 0, dirty = 3, pressed = -1, menu = 0;
 #ifndef __APPLE__
-    // Settings drop-down, opened by tapping the name in the title bar: Wi-Fi, volume, screen direction, and links to Android settings.
-    int settings = 0, wifi = -1, vol = 100, vol_drag = 0;
-    const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = 84, sp_rows = kiosk ? 3 : 4;
-    const int SL_X0 = SP_X + 150, SL_X1 = SP_X + SP_W - 112;                      // the volume slider track
+    // Settings drop-down, opened by tapping the name in the title bar. Rows: Wi-Fi and Bluetooth switches, volume, brightness,
+    // portrait or landscape, and (outside boot mode) a button for Android's own Settings.
+    int settings = 0, wifi = -1, bt = -1, vol = 100, bright = 100, drag = 0;     // drag: 0 none, 1 volume slider, 2 brightness slider
+    const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = 84, sp_rows = kiosk ? 4 : 5;
+    const int SL_X0 = SP_X + 190, SL_X1 = SP_X + SP_W - 112;                      // the slider tracks
 #endif
     double bat_until = 0;                                                       // while set, a box shows the exact battery percentage
     const int BAT_X = W - GAP - 126 - 70, PW_X = BAT_X - 76, PW_Y = 14, PW = 64;                    // the power button in the title bar, next to the time
@@ -172,10 +173,17 @@ int main(int argc, char **argv) {
         int tap = 0, tx = 0, ty = 0;
         if (cur && !prev) { down_x = tc[0].x; down_y = tc[0].y; last_y = down_y; down_t = now(); moved = 0; pressed = -2; dirty = 3; }
 #ifndef __APPLE__
-        if (cur && !prev && state == S_MAIN && settings && !menu &&
-            inside(down_x, down_y, SL_X0 - 16, SP_Y + SP_ROW, SL_X1 - SL_X0 + 32, SP_ROW)) vol_drag = 1;        // a touch that starts on the slider drags it
-        if (cur && vol_drag) { vol = (tc[0].x - SL_X0) * 100 / (SL_X1 - SL_X0); vol = vol < 0 ? 0 : vol > 100 ? 100 : vol; dirty = 3; }
-        if (!cur && prev && vol_drag) { plat_volume_set(vol); vol_drag = 0; dirty = 3; }
+        if (cur && !prev && state == S_MAIN && settings && !menu) {                  // a touch that starts on a slider drags it
+            if (inside(down_x, down_y, SL_X0 - 16, SP_Y + 4 + SP_ROW, SL_X1 - SL_X0 + 32, SP_ROW)) drag = 1;
+            else if (inside(down_x, down_y, SL_X0 - 16, SP_Y + 4 + 2 * SP_ROW, SL_X1 - SL_X0 + 32, SP_ROW)) drag = 2;
+        }
+        if (cur && drag) {
+            int v = (tc[0].x - SL_X0) * 100 / (SL_X1 - SL_X0);
+            if (drag == 1) { vol = v < 0 ? 0 : v > 100 ? 100 : v; }
+            else { bright = v < 5 ? 5 : v > 100 ? 100 : v; plat_brightness_set(bright); }                    // brightness changes while you drag
+            dirty = 3;
+        }
+        if (!cur && prev && drag) { if (drag == 1) plat_volume_set(vol); drag = 0; dirty = 3; }
 #endif
         if (cur && prev) {
             if (abs(tc[0].y - down_y) > 18 || abs(tc[0].x - down_x) > 18) moved = 1;
@@ -200,22 +208,23 @@ int main(int argc, char **argv) {
         } else if (tap && state == S_MAIN && settings) {
             if (inside(tx, ty, SP_X, SP_Y, SP_W, sp_rows * SP_ROW + 8)) {
                 int row = (ty - SP_Y - 4) / SP_ROW;
-                if (row == 0 && tx >= SP_X + SP_W - 190 && wifi >= 0) { plat_wifi_set(!wifi); usleep(600000); wifi = plat_wifi_state(); }
-                else if (row == 2) {                                              // portrait or landscape: the picker starts again to use it
+                if (row == 0 && tx < SP_X + SP_W / 2 && tx >= SP_X + SP_W / 2 - 110 && wifi >= 0) { plat_wifi_set(!wifi); usleep(600000); wifi = plat_wifi_state(); }
+                else if (row == 0 && tx >= SP_X + SP_W - 122 && bt >= 0) { plat_bt_set(!bt); usleep(300000); bt = plat_bt_state(); }
+                else if (row == 3) {                                              // portrait or landscape: the picker starts again to use it
                     int want_land = tx >= SP_X + SP_W / 2, now_land = W > H;
                     if (want_land != now_land) {
                         plat_orientation_set(want_land);
                         char self[256]; ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
                         if (n > 0) { self[n] = 0; plat_close(); execv(self, argv); }
                     }
-                } else if (row == 3 && !kiosk) {                                  // leave the picker and open the Android screen
+                } else if (row == 4 && !kiosk) {                                  // leave the picker and open the Android screen
                     FILE *af = fopen("/data/local/tmp/after_start", "w");
                     if (af) { fputs("android.settings.SETTINGS", af); fclose(af); quit = 1; }
                 }
             } else settings = 0;
             dirty = 3;
         } else if (tap && state == S_MAIN && tx < GAP + 320 && ty < MENU_Y) {
-            settings = 1; wifi = plat_wifi_state(); vol = plat_volume_get(); dirty = 3;
+            settings = 1; wifi = plat_wifi_state(); bt = plat_bt_state(); vol = plat_volume_get(); { int b = plat_brightness_get(); bright = b < 0 ? 100 : b; } dirty = 3;
 #endif
         } else if (tap && state == S_MAIN && tx >= BAT_X - 8 && tx < BAT_X + 66 && ty < MENU_Y) {
             bat_until = now() + 4; dirty = 3;                                    // tap the battery: show the percentage for a few seconds
@@ -328,22 +337,26 @@ int main(int argc, char **argv) {
                     draw_rect(&s, SP_X + 4, SP_Y + 4, SP_W - 8, sp_rows * SP_ROW, inner);
                     for (int r = 1; r < sp_rows; r++) draw_rect(&s, SP_X + 4, SP_Y + 4 + r * SP_ROW - 2, SP_W - 8, 4, edge);
                     int ty0 = SP_Y + 4;
-                    // row 0: Wi-Fi switch
-                    draw_text(&s, SP_X + 24, ty0 + (SP_ROW - 32) / 2, 2, "Wi-Fi", 0xFFFFFF);
-                    if (wifi >= 0) {
-                        int bx = SP_X + SP_W - 190, bw = 166, by = ty0 + 14, bh = SP_ROW - 28;
-                        draw_rect(&s, bx, by, bw, bh, edge); draw_rect(&s, bx + 4, by + 4, bw - 8, bh - 8, wifi ? edge : inner);
-                        draw_text(&s, bx + (bw - (wifi ? 2 : 3) * 24) / 2, by + (bh - 48) / 2, 3, wifi ? "ON" : "OFF", wifi ? inner : 0xFFFFFF);
-                    } else draw_text(&s, SP_X + SP_W - 190, ty0 + (SP_ROW - 16) / 2, 1, "not available", dim);
-                    // row 1: volume slider
-                    int y1 = ty0 + SP_ROW; char vb[16]; snprintf(vb, sizeof vb, "%d%%", vol);
-                    draw_text(&s, SP_X + 24, y1 + (SP_ROW - 32) / 2, 2, "Vol", 0xFFFFFF);
-                    draw_rect(&s, SL_X0, y1 + SP_ROW / 2 - 4, SL_X1 - SL_X0, 8, edge);
-                    draw_rect(&s, SL_X0, y1 + SP_ROW / 2 - 4, (SL_X1 - SL_X0) * vol / 100, 8, edge);
-                    draw_rect(&s, SL_X0 + (SL_X1 - SL_X0) * vol / 100 - 12, y1 + SP_ROW / 2 - 20, 24, 40, edge);       // the knob
-                    draw_text(&s, SL_X1 + 20, y1 + (SP_ROW - 32) / 2, 2, vb, 0xFFFFFF);
+                    // row 0: Wi-Fi and Bluetooth switches, side by side
+                    for (int k = 0; k < 2; k++) {
+                        int st = k ? bt : wifi, hx = SP_X + 4 + k * (SP_W / 2 - 2);
+                        draw_text(&s, hx + 16, ty0 + (SP_ROW - 32) / 2, 2, k ? "BT" : "Wi-Fi", 0xFFFFFF);
+                        if (st >= 0) {
+                            int bw = 98, bx = hx + SP_W / 2 - 4 - bw - 16, by = ty0 + 14, bh = SP_ROW - 28;
+                            draw_rect(&s, bx, by, bw, bh, edge); draw_rect(&s, bx + 4, by + 4, bw - 8, bh - 8, st ? edge : inner);
+                            draw_text(&s, bx + (bw - (st ? 2 : 3) * 16) / 2, by + (bh - 32) / 2, 2, st ? "ON" : "OFF", st ? inner : 0xFFFFFF);
+                        } else draw_text(&s, hx + 16 + (k ? 3 : 6) * 16 + 8, ty0 + (SP_ROW - 16) / 2, 1, "n/a", dim);
+                    }
+                    // rows 1 and 2: volume and brightness sliders
+                    for (int k = 0; k < 2; k++) {
+                        int y1 = ty0 + (k + 1) * SP_ROW, val = k ? bright : vol; char vb[16]; snprintf(vb, sizeof vb, "%d%%", val);
+                        draw_text(&s, SP_X + 20, y1 + (SP_ROW - 32) / 2, 2, k ? "Light" : "Sound", 0xFFFFFF);
+                        draw_rect(&s, SL_X0, y1 + SP_ROW / 2 - 4, SL_X1 - SL_X0, 8, edge);
+                        draw_rect(&s, SL_X0 + (SL_X1 - SL_X0) * val / 100 - 12, y1 + SP_ROW / 2 - 20, 24, 40, edge);      // the knob
+                        draw_text(&s, SL_X1 + 20, y1 + (SP_ROW - 32) / 2, 2, vb, 0xFFFFFF);
+                    }
                     // row 2: portrait or landscape, the current one is filled
-                    int y2 = ty0 + 2 * SP_ROW, land = W > H, hw = SP_W / 2 - 16;
+                    int y2 = ty0 + 3 * SP_ROW, land = W > H, hw = SP_W / 2 - 16;
                     for (int k = 0; k < 2; k++) {
                         int bx = SP_X + 12 + k * (SP_W / 2), by = y2 + 12, bh = SP_ROW - 24, sel = (k == 1) == land;
                         draw_rect(&s, bx, by, hw, bh, edge); draw_rect(&s, bx + 4, by + 4, hw - 8, bh - 8, sel ? edge : inner);
@@ -352,7 +365,7 @@ int main(int argc, char **argv) {
                     }
                     // row 3: Android's own Settings app, for networks and Bluetooth (not in boot mode, where there is no way out)
                     if (!kiosk) {
-                        int y3 = ty0 + 3 * SP_ROW, bx = SP_X + 12, by = y3 + 12, bw = SP_W - 24, bh = SP_ROW - 24;
+                        int y3 = ty0 + 4 * SP_ROW, bx = SP_X + 12, by = y3 + 12, bw = SP_W - 24, bh = SP_ROW - 24;
                         draw_rect(&s, bx, by, bw, bh, edge); draw_rect(&s, bx + 4, by + 4, bw - 8, bh - 8, inner);
                         const char *nm = "ANDROID SETTINGS";
                         draw_text(&s, bx + (bw - (int)strlen(nm) * 16) / 2, by + (bh - 32) / 2, 2, nm, 0xFFFFFF);

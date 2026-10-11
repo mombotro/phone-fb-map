@@ -213,6 +213,65 @@ static void plat_wifi_set(int on) {
     (void)!system(cmd);
 }
 
+// Screen brightness as a percent, 5 to 100. Uses the same backlight file as the power button. Returns -1 when none was found.
+static int plat_brightness_get(void) {
+    if (!plat__bl_use[0]) return -1;
+    char mx[128]; snprintf(mx, sizeof mx, "%s", plat__bl_use);
+    char *sl = strrchr(mx, '/'); if (!sl) return -1;
+    strcpy(sl + 1, "max_brightness");
+    int max = 255; FILE *f = fopen(mx, "r"); if (f) { if (fscanf(f, "%d", &max) != 1 || max < 1) max = 255; fclose(f); }
+    int v = -1; f = fopen(plat__bl_use, "r"); if (!f) return -1;
+    if (fscanf(f, "%d", &v) != 1) v = -1; fclose(f);
+    if (v < 0) return -1;
+    int pct = v * 100 / max; return pct < 5 ? 5 : pct > 100 ? 100 : pct;
+}
+static void plat_brightness_set(int pct) {
+    if (!plat__bl_use[0]) return;
+    char mx[128]; snprintf(mx, sizeof mx, "%s", plat__bl_use);
+    char *sl = strrchr(mx, '/'); if (!sl) return;
+    strcpy(sl + 1, "max_brightness");
+    int max = 255; FILE *f = fopen(mx, "r"); if (f) { if (fscanf(f, "%d", &max) != 1 || max < 1) max = 255; fclose(f); }
+    if (pct < 5) pct = 5; if (pct > 100) pct = 100;
+    int v = pct * max / 100; if (v < 1) v = 1;
+    plat__bl_set(v); plat__bl_on = v;                          // the level the power button brings back
+}
+
+// Bluetooth radio switch through rfkill. 1 on, 0 off, -1 when the phone has no Bluetooth switch. This switches the radio only:
+// Android is stopped, so nothing pairs or connects until Android runs again.
+static int plat__bt_index(void) {
+    DIR *d = opendir("/sys/class/rfkill"); if (!d) return -1;
+    struct dirent *e; int idx = -1;
+    while (idx < 0 && (e = readdir(d))) {
+        if (strncmp(e->d_name, "rfkill", 6)) continue;
+        char p[128], t[32] = ""; snprintf(p, sizeof p, "/sys/class/rfkill/%s/type", e->d_name);
+        FILE *f = fopen(p, "r"); if (!f) continue;
+        if (!fgets(t, sizeof t, f)) t[0] = 0; fclose(f);
+        if (strncmp(t, "bluetooth", 9) == 0) idx = atoi(e->d_name + 6);
+    }
+    closedir(d); return idx;
+}
+static int plat_bt_state(void) {
+    int i = plat__bt_index(); if (i < 0) return -1;
+    char p[96]; snprintf(p, sizeof p, "/sys/class/rfkill/rfkill%d/state", i);
+    FILE *f = fopen(p, "r"); if (!f) return -1;
+    int v = -1; if (fscanf(f, "%d", &v) != 1) v = -1; fclose(f);
+    return v < 0 ? -1 : v == 1;
+}
+static void plat_bt_set(int on) {
+    int i = plat__bt_index(); if (i < 0) return;
+    int fd = open("/dev/rfkill", O_WRONLY);                    // the rfkill device: the way that works on kernels where the state file is read-only
+    if (fd >= 0) {
+        unsigned char ev[8] = { 0 };
+        ev[0] = (unsigned char)(i & 255); ev[1] = (unsigned char)((i >> 8) & 255);   // idx (32 bit, little endian)
+        ev[4] = 2; ev[5] = 2; ev[6] = on ? 0 : 1; ev[7] = 0;   // type bluetooth, op change, soft block when off
+        (void)!write(fd, ev, sizeof ev); close(fd);
+    }
+    if (plat_bt_state() != on) {                               // fall back to the state file
+        char p[96]; snprintf(p, sizeof p, "/sys/class/rfkill/rfkill%d/state", i);
+        FILE *f = fopen(p, "w"); if (f) { fprintf(f, "%d\n", on ? 1 : 0); fclose(f); }
+    }
+}
+
 // Portrait or landscape: write the rotation file the display layer reads at start. The program must start again to use it.
 static void plat_orientation_set(int landscape) {
     int native_wide = plat__v.xres > plat__v.yres;
