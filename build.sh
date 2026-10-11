@@ -23,9 +23,9 @@ ios() {
 android() { "$ACC" -O2 -static -fno-pie -fno-emulated-tls -o "build/$2_android" "$1" -lm; }
 
 ios fbdemo.c fbdemo
-for t in paint condemo fbshell calib fbreset notes timer; do ios common/$t.c $t; done
+for t in paint condemo fbshell calib fbreset notes timer longhouse; do ios common/$t.c $t; done
 ios launcher/launcher.c launcher
 android android/fbdemo.c fbdemo
-for t in paint condemo fbshell notes timer; do android common/$t.c $t; done
+for t in paint condemo fbshell notes timer longhouse; do android common/$t.c $t; done
 android launcher/launcher.c launcher
 ls -l build | awk 'NR>1 {print $5, $9}'

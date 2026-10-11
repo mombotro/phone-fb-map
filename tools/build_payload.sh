@@ -17,7 +17,7 @@ $CC -O2 -Wall -static -fno-pie -fno-emulated-tls -o build/fbrun_android launcher
 
 P=tools/payload; rm -rf $P; mkdir -p $P/ios7/bin $P/ios7/FBTools.app $P/ios12/bin $P/ios12/FBTools.app $P/android/bin
 echo "== iPhone 4 (iOS 7)"
-for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer musicplayer:musicplayer tic80:tic80 calib:calib fbreset:fbreset; do
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer longhouse:longhouse musicplayer:musicplayer tic80:tic80 calib:calib fbreset:fbreset; do
     src=build/${f##*:}_ios; [ -f "$src" ] && cp "$src" $P/ios7/bin/${f%%:*} || echo "  missing ${f##*:}_ios"
 done
 cp launcher/run_launcher_ios.sh launcher/run_kiosk_ios.sh launcher/com.local.fbkiosk.plist $P/ios7/
@@ -36,7 +36,7 @@ clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-un
 clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache \
     -install_name /usr/lib/FBMode12.dylib -o $P/ios12/lib/FBMode12.dylib -x objective-c tweak/ios12/FBMode12.m -x none build/stubs/CoreFoundation.tbd
 echo "== Android"
-for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer musicplayer:musicplayer condemo:condemo; do
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer longhouse:longhouse musicplayer:musicplayer condemo:condemo; do
     cp build/${f##*:}_android $P/android/bin/${f%%:*}
 done
 cp build/fbls_android $P/android/bin/fbls; cp build/fbrun_android $P/android/bin/fbrun

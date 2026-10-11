@@ -556,7 +556,8 @@ def fbtools_start(dev, action, body):
         rd = bool(body.get("remove_data"))
         return fbm.start_job(dev, "Uninstall FB Tools", lambda log: fbm.do_uninstall(dev, plat, rd, log)).id
     if action == "repair":
-        return fbm.start_job(dev, "Repair FB Tools", lambda log: fbm.do_repair(dev, plat, log)).id
+        force = bool(body.get("force"))
+        return fbm.start_job(dev, "Repair FB Tools", lambda log: fbm.do_repair(dev, plat, log, force)).id
     if action == "mode":
         mode = body.get("mode")
         return fbm.start_job(dev, "Change start mode", lambda log: fbm.do_set_mode(dev, plat, mode, log)).id

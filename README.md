@@ -22,6 +22,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
 | `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |
 | `timer` | A stopwatch, a countdown timer, and an alarm clock. The timer and the alarm ring while the program runs. The alarm wakes a blank screen. | iPhone 4, Nexus 4, LG Intuition |
+| `longhouse` | A text chat client for the Longhouse family chat. It reads and sends messages over the home Wi-Fi. Pictures show as `[picture]`. | iPhone 4, Intuition, Kindle Fire |
 | `fbreset` | Clears a picture that a killed program left on the screen. | iPhone 4 |
 | `Phone Files` | A Mac app. It shows the files on a connected iPhone or Android phone. Drag files onto the window to copy them to the phone, and click a file to download it. | Mac to iPhone, Mac to Android |
 | `Send to Phone` | A Mac app. Drop a music file on it and the iPhone plays the file. | Mac to iPhone 4 |
@@ -59,6 +60,9 @@ Tap the icon, then tap a tile. The Shut down tile turns the phone off after you 
 The iPhone 5s (iOS 12, jailbroken with Chimera) runs the same programs as arm64 builds. Run `tools/build_ios12.sh`, then `tools/deploy_ios12.sh`.
 The deploy script signs the programs on the phone, because the Mac `ldid` is too old for iOS 12. Run a program with `run_ios12.sh PROGRAM` on the phone.
 SpringBoard stays frozen while the program runs, so a run lasts at most 100 seconds. There is no tweak or kiosk mode for the 5s yet.
+
+For the Longhouse chat, run `python3 tools/longhouse_login.py` on the Mac. It signs in with a person invite (saved in `research/longhouse_invite.txt`, which git ignores), and copies a 24-hour session to the phone.
+The phone talks to the home-node over plain HTTP, so the phone must be on the same Wi-Fi.
 
 To copy files to and from a phone, build the Mac app with `tools/build_phonefiles_app.sh`, then open `tools/PhoneFiles.app`.
 It uses SSH for iPhones and `adb` for Android phones.

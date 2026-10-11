@@ -38,6 +38,7 @@ static const Tool TOOLS[] = {
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
+    { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Calibrate", "fix touch axes",      "+",   0x6E3AA5, BASE "/calib",                 K_RUN },
 #else
     { "Paint",     "draw with fingers",   "~",   0x3A6EA5, BASE "/paint 3600",            K_RUN },
@@ -45,6 +46,7 @@ static const Tool TOOLS[] = {
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
+    { "Chat",      "Longhouse family chat", "Lh", 0x3A6EA5, BASE "/longhouse 86400 " BASE "/data/longhouse", K_RUN },
     { "Console",   "text demo",           "Aa",  0xA58A3A, BASE "/condemo 20 2",          K_RUN },
 #endif
 #ifdef __APPLE__

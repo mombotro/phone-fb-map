@@ -26,6 +26,7 @@ APPS = [
     {"id": "timer", "name": "Timer", "desc": "Stopwatch, countdown timer, and alarm.", "bin": "timer", "data": ["data/timer"]},
     {"id": "music", "name": "Music", "desc": "Play your music.", "bin": "musicplayer", "data": ["music"], "android_extra": ["musichelper.jar"]},
     {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts.", "bin": "tic80", "data": ["carts"], "only": ["ios7"]},
+    {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
     {"id": "console", "name": "Console", "desc": "A text console demo.", "bin": "condemo", "only": ["android"]},
 ]
@@ -157,21 +158,27 @@ def mtweak(m):
     return m.get("tweak", True)
 
 
-def record_sizes(dev, plat, m):
+def record_sizes(dev, plat, m, only=None):
     """Remember, in the manifest, the size of each installed file on the phone (after signing, which adds bytes on iOS 12)
     and the size of the copy in this app. Status and repair compare against these, so they notice damage and also
-    notice when this app carries a newer build."""
+    notice when this app carries a newer build. With `only` (a list of remote paths), only those files are updated:
+    files that were not copied now must keep their old record, or a pending update would be hidden."""
     files = m.get("files", [])
     remote = remote_sizes(dev, plat, files)
     local = {}
     for rel, rem, _ in expected_files(plat, m.get("apps", []), mtweak(m)):
         src = pl(plat, rel)
         if os.path.exists(src): local[rem] = os.path.getsize(src)
-    m["sizes"] = {f: remote[f] for f in files if f in remote}
-    m["psizes"] = local
+    sizes = {f: v for f, v in m.get("sizes", {}).items() if f in files}
+    psizes = {f: v for f, v in m.get("psizes", {}).items() if f in files}
+    for f in files:
+        if only is not None and f not in only: continue
+        if f in remote: sizes[f] = remote[f]
+        if f in local: psizes[f] = local[f]
+    m["sizes"], m["psizes"] = sizes, psizes
 
 
-def problems_for(dev, plat, m):
+def problems_for(dev, plat, m, force=False):
     """(missing_or_changed, outdated) lists of (rel, remote, mode) for an installed phone."""
     exp = expected_files(plat, m.get("apps", []), mtweak(m))
     have = remote_sizes(dev, plat, [r for _, r, _ in exp])
@@ -188,6 +195,7 @@ def problems_for(dev, plat, m):
         if h is None: bad.append((rel, remote, md, "missing"))
         elif remote in want and h != want[remote]: bad.append((rel, remote, md, "changed (%d bytes, expected %d)" % (h, want[remote])))
         elif remote not in want and plat != "ios12" and h != os.path.getsize(src): bad.append((rel, remote, md, "changed"))
+        elif force: old.append((rel, remote, md, "reinstall requested"))
         elif remote in pwant and os.path.getsize(src) != pwant[remote]: old.append((rel, remote, md, "a newer build is in this app"))
     return bad, old
 
@@ -393,7 +401,7 @@ def do_uninstall(dev, plat, remove_data, log):
         dev.sh("rm -f /var/root/.disable_fbmode; killall -9 SpringBoard", timeout=30)
 
 
-def do_repair(dev, plat, log):
+def do_repair(dev, plat, log, force=False):
     m = read_manifest(dev, plat)
     if not m: raise FBToolsError("FB Tools is not installed on this phone. Use Install.")
     if plat == "android":
@@ -401,7 +409,7 @@ def do_repair(dev, plat, log):
     app_ids = m.get("apps", []); mode = m.get("mode", "none")
     exp = expected_files(plat, app_ids, mtweak(m))
     log("Checking %d files..." % len(exp))
-    bad, old = problems_for(dev, plat, m)
+    bad, old = problems_for(dev, plat, m, force)
     new_files = [r for _, r, _ in exp]
     stale = [f for f in m.get("files", []) if f not in new_files]            # files an older version installed, which this one does not use
     if stale:
@@ -410,7 +418,7 @@ def do_repair(dev, plat, log):
             log("  remove %s" % f)
             dev.sh(dev.rmf(f), timeout=20)
         m["files"] = new_files
-        record_sizes(dev, plat, m)
+        record_sizes(dev, plat, m, only=[])
         write_manifest(dev, plat, m)
     if bad or old:
         for rel, remote, md, why in bad + old: log("  %s: %s" % (remote, why))
@@ -421,7 +429,7 @@ def do_repair(dev, plat, log):
             dev.sh("killall -9 SpringBoard", timeout=30)
         m["apps"] = app_ids
         m["files"] = [r for _, r, _ in exp]                            # the manifest lists every file we now own
-        record_sizes(dev, plat, m)
+        record_sizes(dev, plat, m, only=[r for _, r, _, _ in bad + old])
         write_manifest(dev, plat, m)
     else:
         log("All program files are in place.")
@@ -468,7 +476,7 @@ def do_app(dev, plat, app_id, action, log):
         ids = [i for i in ids if i != app_id]
         files = set(m.get("files", [])) - {r for _, r, _ in app_files(plat, a)}
     m["apps"] = ids; m["files"] = sorted(files)
-    record_sizes(dev, plat, m)
+    record_sizes(dev, plat, m, only=[r for _, r, _ in app_files(plat, a)] if action == "add" else [])
     write_manifest(dev, plat, m)
     log("The picker shows only the apps that are installed. It looks again each time it starts.")
 
