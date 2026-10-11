@@ -9,7 +9,7 @@ The page and its API listen on 127.0.0.1 only. Every API call needs a random tok
 Host header must match, so other web pages on this Mac cannot use it.
 """
 import argparse, http.server, io, json, os, re, secrets, shutil, socket, socketserver, subprocess, sys, tarfile
-import tempfile, threading, time, urllib.parse, webbrowser, zipfile
+import posixpath, tempfile, threading, time, urllib.parse, webbrowser, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOKEN = secrets.token_urlsafe(18)
@@ -48,6 +48,22 @@ def safe_to_delete(path):
     return len(parts) >= 2 and ".." not in parts
 
 
+# Protection: this app only changes the user's own files. Delete, rename and overwrite work only INSIDE these folders
+# (not on the folders themselves). System files, the programs and settings stay locked. Download and browse always work.
+# Set PHONEFILES_EXPERT=1 in the environment (start the app from a terminal) to lift the lock.
+EXPERT = os.environ.get("PHONEFILES_EXPERT") == "1"
+PROTECTED_MSG = "Protected: this is a system or app file. Phone Files only changes your own files (notes, music, carts and app data)."
+
+
+def in_zone(zones, path):
+    if EXPERT:
+        return True
+    if ".." in path.split("/"):
+        return False
+    p = posixpath.normpath("/" + path.lstrip("/"))      # a leading "//" would survive normpath
+    return any(p.startswith(z.rstrip("/") + "/") for z in zones)
+
+
 class PhoneError(Exception):
     pass
 
@@ -58,6 +74,16 @@ class IOS:
     kind = "ios"
     places = [("Home", "/var/root"), ("Notes", "/var/root/data/notes"), ("Music", "/var/root/music"),
               ("Carts", "/var/root/carts"), ("All app data", "/var/root/data")]
+    zones = ["/var/root/data", "/var/root/music", "/var/root/carts"]
+
+    def can_change(self, path):
+        return in_zone(self.zones, path)
+
+    def guard(self, path):
+        if not self.can_change(path): raise PhoneError(PROTECTED_MSG)
+
+    def exists(self, path):
+        return self.sh("[ -e %s ] && echo y || echo n" % q(path), timeout=15).stdout.decode().strip() == "y"
 
     def __init__(self, udid, port):
         self.udid, self.port = udid, port
@@ -135,6 +161,7 @@ class IOS:
         return gen(), fname, None
 
     def write(self, path, reader, length):
+        if not self.can_change(path) and self.exists(path): raise PhoneError(PROTECTED_MSG)   # no overwriting protected files
         self.tunnel()
         parent = os.path.dirname(path)
         p = subprocess.Popen(self.ssh_cmd("mkdir -p %s && cat > %s" % (q(parent), q(path))), stdin=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -158,10 +185,12 @@ class IOS:
 
     def rm(self, path):
         if not safe_to_delete(path): raise PhoneError("refusing to delete this path")
+        self.guard(path)
         r = self.sh("rm -rf %s" % q(path), timeout=60)
         if r.returncode: raise PhoneError(r.stderr.decode(errors="replace"))
 
     def mv(self, a, b):
+        self.guard(a); self.guard(b)
         r = self.sh("mv %s %s" % (q(a), q(b)), timeout=30)
         if r.returncode: raise PhoneError(r.stderr.decode(errors="replace"))
 
@@ -172,6 +201,16 @@ class Android:
     kind = "android"
     places = [("App files", ANDROID_TMP), ("Notes", ANDROID_TMP + "/data/notes"), ("Music", ANDROID_TMP + "/music"),
               ("Carts", ANDROID_TMP + "/carts"), ("Internal storage", "/sdcard")]
+    zones = [ANDROID_TMP + "/data", ANDROID_TMP + "/music", ANDROID_TMP + "/carts", "/sdcard"]
+
+    def can_change(self, path):
+        return in_zone(self.zones, path)
+
+    def guard(self, path):
+        if not self.can_change(path): raise PhoneError(PROTECTED_MSG)
+
+    def exists(self, path):
+        return self.sh("[ -e %s ] && echo y || echo n" % q(path), timeout=15).stdout.decode().strip().startswith("y")
 
     def __init__(self, serial):
         self.serial = serial
@@ -278,6 +317,7 @@ class Android:
         if not self.is_dir(path): raise PhoneError("cannot create the folder")
 
     def write(self, path, reader, length):
+        if not self.can_change(path) and self.exists(path): raise PhoneError(PROTECTED_MSG)   # no overwriting protected files
         tmpdir = tempfile.mkdtemp(prefix="pf_")
         try:
             local = os.path.join(tmpdir, "up")
@@ -298,10 +338,12 @@ class Android:
 
     def rm(self, path):
         if not safe_to_delete(path): raise PhoneError("refusing to delete this path")
+        self.guard(path)
         flag = "-r " if self.is_dir(path) else ""
         self.sh("rm %s%s" % (flag, q(path)), timeout=60)
 
     def mv(self, a, b):
+        self.guard(a); self.guard(b)
         r = self.sh("mv %s %s" % (q(a), q(b)), timeout=30)
         if r.returncode: raise PhoneError(r.stderr.decode(errors="replace"))
 
@@ -392,7 +434,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             d = get_device(qs.get("dev", [""])[0])
             path = qs.get("path", ["/"])[0]
             if u.path == "/api/ls":
-                return self.reply(200, {"path": path, "entries": d.ls(path)})
+                ents = d.ls(path)
+                for e in ents:
+                    e["protected"] = not d.can_change(path.rstrip("/") + "/" + e["name"])
+                return self.reply(200, {"path": path, "entries": ents})
             if u.path == "/api/download":
                 gen, fname, size = d.read_stream(path)
                 self.send_response(200)

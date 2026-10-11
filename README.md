@@ -61,6 +61,7 @@ SpringBoard stays frozen while the program runs, so a run lasts at most 100 seco
 
 To copy files to and from a phone, build the Mac app with `tools/build_phonefiles_app.sh`, then open `tools/PhoneFiles.app`.
 It uses SSH for iPhones and `adb` for Android phones.
+It only deletes, renames, or overwrites your own files: notes, music, carts, and app data. System files and the programs on the phone are locked. A lock icon marks them.
 
 To start an Android phone on the picker at boot, run `launcher/android_boot.sh on`. The picker then has no Exit tile and starts again if it stops.
 `adb` still works. Run `launcher/android_boot.sh off` to undo it. The phone needs root.

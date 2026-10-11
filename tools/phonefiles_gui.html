@@ -40,6 +40,10 @@
   tr:hover td { background:rgba(127,127,127,.08); }
   .acts button { padding:3px 8px; font-size:12px; margin-left:4px; }
   .acts { text-align:right; }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  button:disabled:hover { border-color:var(--line); color:var(--text); }
+  .lock { opacity:.7; font-size:12px; }
+  #note { padding:7px 14px; font-size:12px; color:var(--dim); border-top:1px solid var(--line); background:var(--panel); }
   #empty { padding:40px; color:var(--dim); text-align:center; }
   #drop { position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(76,141,219,.22); border:3px dashed var(--accent); font-size:22px; z-index:5; pointer-events:none; }
   #toast { position:fixed; right:16px; bottom:16px; display:flex; flex-direction:column; gap:8px; z-index:9; }
@@ -68,6 +72,7 @@
       <input id="file" type="file" multiple hidden>
     </div>
     <div id="list"></div>
+    <div id="note">&#128274; marks system and app files. Phone Files cannot delete, rename or overwrite them. Your notes, music, carts and app data can be changed.</div>
     <div id="drop">Drop files or folders to copy them to this folder</div>
   </div>
 </div>
@@ -148,13 +153,13 @@ function render() {
   for (const e of entries) {
     const tr = document.createElement("tr");
     const isDir = e.type === "d";
-    tr.innerHTML = `<td class="name">${isDir ? "&#128193; " : "&#128196; "}${esc(e.name)}</td><td class="num">${isDir ? "" : size(e.size)}</td><td class="num">${when(e.mtime)}</td><td class="acts"></td>`;
+    tr.innerHTML = `<td class="name">${isDir ? "&#128193; " : "&#128196; "}${esc(e.name)}${e.protected ? ' <span class="lock" title="System or app file: protected from changes here">&#128274;</span>' : ""}</td><td class="num">${isDir ? "" : size(e.size)}</td><td class="num">${when(e.mtime)}</td><td class="acts"></td>`;
     tr.querySelector(".name").onclick = () => { if (isDir) go(join(cwd, e.name)); else download(e); };
     const acts = tr.querySelector(".acts");
-    const mk = (label, fn, cls) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = (ev) => { ev.stopPropagation(); fn(); }; acts.appendChild(b); };
+    const mk = (label, fn, cls, locked) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; if (locked) { b.disabled = true; b.title = "Protected: system or app file"; } b.onclick = (ev) => { ev.stopPropagation(); fn(); }; acts.appendChild(b); };
     mk(isDir ? "Download .zip/.tar" : "Download", () => download(e));
-    mk("Rename", () => rename(e));
-    mk("Delete", () => del(e), "danger");
+    mk("Rename", () => rename(e), "", e.protected);
+    mk("Delete", () => del(e), "danger", e.protected);
     t.appendChild(tr);
   }
   list.innerHTML = ""; list.appendChild(t);
