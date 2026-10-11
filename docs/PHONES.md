@@ -75,7 +75,7 @@ You must sign programs on the phone with `ldid` and the entitlements in `common/
 | Notes and to-do lists | Works | `rename()` fails on Android 4.1 with this toolkit. The code calls the kernel directly. |
 | Timer and stopwatch | Unknown | The alarm sound now plays through the Java helper (worked on the Kindle Fire, not tried here). The alarm cannot wake a blank screen. |
 | Music: sound | Works | Android plays the files with MediaPlayer, through a small Java helper. |
-| Music: player screen | Unknown | |
+| Music: player screen | Works | Folders, play, and sound. |
 | Shell | Unknown | |
 | Boot straight into FB Tools | Works | No Exit tile. The picker starts again if it stops. |
 | Home-screen icon | Unknown | The icon app starts the picker when launched from `adb`. Nobody tapped it yet. |
