@@ -24,7 +24,7 @@ static __thread char tls_pad[32] __attribute__((aligned(32)));      // keeps the
 static volatile sig_atomic_t g_stop;
 static pid_t g_child;
 
-static void on_signal(int sig) { (void)sig; g_stop = 1; if (g_child > 0) kill(g_child, SIGTERM); }
+static void on_signal(int sig) { (void)sig; g_stop = 1; if (g_child > 0) kill(-g_child, SIGTERM); }       // -pid: the whole group (the picker and its tools)
 static double now(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec + tv.tv_usec / 1e6; }
 static void logline(const char *msg) {
     FILE *f = fopen(DIR "/boot.log", "a");
@@ -83,6 +83,7 @@ static void run_once(const char *prog, long seconds, int kiosk) {
     (void)!system("stop");
     g_child = fork();
     if (g_child == 0) {
+        setpgid(0, 0);                                                  // its own group, so everything it starts can be stopped together
         int fd = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0666);
         if (fd >= 0) { dup2(fd, 1); dup2(fd, 2); close(fd); }
         close(0);
@@ -96,8 +97,8 @@ static void run_once(const char *prog, long seconds, int kiosk) {
         pid_t r = waitpid(g_child, &st, WNOHANG);
         if (r == g_child) break;
         if (r < 0 && errno != EINTR) break;
-        if (g_stop) { kill(g_child, SIGTERM); usleep(500000); kill(g_child, SIGKILL); waitpid(g_child, &st, 0); break; }
-        if (now() - t0 > seconds + 30) { kill(g_child, SIGKILL); waitpid(g_child, &st, 0); break; }   // watchdog
+        if (g_stop) { kill(-g_child, SIGTERM); usleep(500000); kill(-g_child, SIGKILL); waitpid(g_child, &st, 0); break; }
+        if (now() - t0 > seconds + 30) { kill(-g_child, SIGKILL); waitpid(g_child, &st, 0); break; }   // watchdog
         usleep(200000);
     }
     g_child = 0;

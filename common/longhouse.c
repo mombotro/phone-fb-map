@@ -12,6 +12,14 @@
 #include "draw.h"
 #include "kbd.h"
 #include "ui.h"
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_THREAD_LOCALS                                    // iOS 7 has no thread-local storage
+#include "third_party/stb_image.h"
+#include "lhnet.h"
+#include <pthread.h>
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
@@ -121,7 +129,8 @@ static const char *jstr(const JN *j) { return j && j->t == J_STR && j->s ? j->s 
 // ---------------------------------------------------------------- HTTP (plain, one request per connection)
 
 static char g_err[200];
-typedef struct { char host[64]; int port; char token[1024]; char person[96]; char name[64]; char home[96]; } Cfg;
+typedef struct { char host[64]; int port; char token[1024]; char person[96]; char name[64]; char home[96]; char home_id[96]; char sig_host[64]; char sig_path[96]; char sig_ip[48]; } Cfg;
+static unsigned long g_node_epoch, g_node_epoch_at;      // the home-node's clock (HTTP Date header), for the TLS certificate dates
 static Cfg g_cfg;
 static int g_have_cfg;
 
@@ -194,6 +203,16 @@ static int http_do(const char *method, const char *path, const char *body, char 
     char *hdr_end = strstr(buf, "\r\n\r\n");
     if (!status || !hdr_end) { snprintf(g_err, sizeof g_err, "no answer from the home-node"); free(buf); return 0; }
     *hdr_end = 0; char *b = hdr_end + 4; size_t bn = n - (size_t)(b - buf);
+    for (char *h = buf; *h; h++) if (h[0] == '\n' && !strncasecmp(h + 1, "date:", 5)) {            // "Date: Sun, 11 Oct 2026 05:35:23 GMT"
+        static const char *mon[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        int d, y, hh, mm, ss; char ms[8] = "";
+        if (sscanf(h + 6, " %*3s, %d %3s %d %d:%d:%d", &d, ms, &y, &hh, &mm, &ss) == 6)
+            for (int i = 0; i < 12; i++) if (!strcmp(ms, mon[i])) {
+                struct tm t; memset(&t, 0, sizeof t); t.tm_mday = d; t.tm_mon = i; t.tm_year = y - 1900; t.tm_hour = hh; t.tm_min = mm; t.tm_sec = ss;
+                g_node_epoch = (unsigned long)timegm(&t); g_node_epoch_at = (unsigned long)time(NULL);
+            }
+        break;
+    }
     int chunked = 0; for (char *h = buf; *h; h++) if (!strncasecmp(h, "transfer-encoding: chunked", 26)) { chunked = 1; break; }
     if (chunked) { size_t cn; char *d = dechunk(b, bn, &cn); *out = d; }
     else { *out = malloc(bn + 1); memcpy(*out, b, bn); (*out)[bn] = 0; }
@@ -206,7 +225,7 @@ static int http_do(const char *method, const char *path, const char *body, char 
 // ---------------------------------------------------------------- data
 
 typedef struct { char id[96]; char kind[8]; char title[100]; char members[16][96]; int nmem; } Conv;
-typedef struct { char id[96]; char sender[96]; char *body; char when[24]; char iso[32]; int deleted, edited, picture; } Msg;
+typedef struct { char id[96]; char sender[96]; char *body; char when[24]; char iso[32]; int deleted, edited, picture, has_thumb; } Msg;
 #define MAXCONV 64
 #define MAXMSG 200
 static Conv g_conv[MAXCONV]; static int g_nconv;
@@ -235,6 +254,16 @@ static void load_config(const char *dir) {
         snprintf(g_cfg.person, sizeof g_cfg.person, "%s", jstr(jget(j, "personId")));
         snprintf(g_cfg.name, sizeof g_cfg.name, "%s", jstr(jget(j, "displayName")));
         snprintf(g_cfg.home, sizeof g_cfg.home, "%s", jstr(jget(j, "home")));
+        snprintf(g_cfg.home_id, sizeof g_cfg.home_id, "%s", jstr(jget(j, "homeId")));
+        const char *sig = jstr(jget(j, "signaling")); if (!sig[0]) sig = "https://longhouse.tech/longhouse";      // "https://host/path"
+        g_cfg.sig_host[0] = 0; g_cfg.sig_path[0] = 0;
+        snprintf(g_cfg.sig_ip, sizeof g_cfg.sig_ip, "%s", jstr(jget(j, "signalingIp")));
+        snprintf(lh_ip_override, sizeof lh_ip_override, "%s", g_cfg.sig_ip);
+        if (!strncmp(sig, "https://", 8)) {
+            const char *h = sig + 8, *sl = strchr(h, '/'); size_t hl = sl ? (size_t)(sl - h) : strlen(h);
+            if (hl < sizeof g_cfg.sig_host) { memcpy(g_cfg.sig_host, h, hl); g_cfg.sig_host[hl] = 0; }
+            snprintf(g_cfg.sig_path, sizeof g_cfg.sig_path, "%s", sl ? sl : "");
+        }
         g_have_cfg = g_cfg.token[0] && g_cfg.person[0] && parse_home(g_cfg.home, &g_cfg) == 0;
         jfree(j);
     }
@@ -312,7 +341,8 @@ static int fetch_messages(const char *conv_id) {
         snprintf(o->iso, sizeof o->iso, "%s", jstr(jget(m, "createdAt"))); format_time(o->iso, o->when, sizeof o->when);
         JN *del = jget(m, "deletedAt"), *ed = jget(m, "editedAt"), *media = jget(m, "media"), *ht = jget(m, "hasThumb");
         o->deleted = del && del->t == J_STR; o->edited = ed && ed->t == J_STR;
-        o->picture = (ht && ht->t == J_BOOL && ht->n != 0) || (media && media->t == J_OBJ);
+        o->has_thumb = ht && ht->t == J_BOOL && ht->n != 0;
+        o->picture = o->has_thumb || (media && media->t == J_OBJ);
         const char *b = o->deleted ? "(deleted)" : jstr(jget(m, "body"));
         size_t bl = strlen(b); o->body = malloc(bl + 24); strcpy(o->body, b);
         if (o->picture && !o->deleted) {
@@ -346,6 +376,88 @@ static int send_message(const char *conv_id, const char *text) {
     return st == 200 ? 0 : -1;
 }
 
+// ---------------------------------------------------------------- pictures (thumbnails) in a background thread
+
+#define MAXPIC 12
+#define PIC_MAX 260                                              // a thumbnail is shown at most this many pixels on its long edge
+typedef struct { char id[96]; int state; unsigned char *rgb; int w, h; char err[80]; } Pic;      // state: 1 waiting, 2 ready, 3 failed
+static Pic g_pic[MAXPIC]; static int g_picn;
+static pthread_mutex_t g_pm = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pc = PTHREAD_COND_INITIALIZER;
+static volatile int g_pic_quit;
+
+static Pic *pic_find(const char *id) { for (int i = 0; i < g_picn; i++) if (!strcmp(g_pic[i].id, id)) return &g_pic[i]; return NULL; }
+
+static void pic_request(const char *id) {                       // main thread: ask for a thumbnail once
+    pthread_mutex_lock(&g_pm);
+    if (!pic_find(id)) {
+        if (g_picn == MAXPIC) { free(g_pic[0].rgb); memmove(&g_pic[0], &g_pic[1], (MAXPIC - 1) * sizeof g_pic[0]); g_picn--; }   // forget the oldest
+        Pic *p = &g_pic[g_picn++]; memset(p, 0, sizeof *p); snprintf(p->id, sizeof p->id, "%s", id); p->state = 1;
+        pthread_cond_signal(&g_pc);
+    }
+    pthread_mutex_unlock(&g_pm);
+}
+
+static unsigned long tls_epoch(void) { return g_node_epoch ? g_node_epoch + ((unsigned long)time(NULL) - g_node_epoch_at) : (unsigned long)time(NULL); }
+
+static void *pic_worker(void *arg) {
+    (void)arg;
+    LhConn *c = malloc(sizeof *c); memset(c, 0, sizeof *c); c->fd = -1;
+    int rpc = 0; time_t last_use = 0;
+    while (!g_pic_quit) {
+        char id[96] = "";
+        pthread_mutex_lock(&g_pm);
+        for (;;) {
+            for (int i = g_picn - 1; i >= 0; i--) if (g_pic[i].state == 1) { snprintf(id, sizeof id, "%s", g_pic[i].id); break; }   // newest first
+            if (id[0] || g_pic_quit) break;
+            struct timeval tv; gettimeofday(&tv, NULL); struct timespec ts = { tv.tv_sec + 5, tv.tv_usec * 1000 };       // clock_gettime does not exist on iOS 7
+            pthread_cond_timedwait(&g_pc, &g_pm, &ts);
+            if (c->open && time(NULL) - last_use > 45) { lh_close(c); }                             // idle: let go of the connection
+        }
+        pthread_mutex_unlock(&g_pm);
+        if (g_pic_quit) break;
+        unsigned char *jpg = NULL; size_t jl = 0; char err[80] = "";
+        for (int attempt = 0; attempt < 2 && !jpg; attempt++) {                                    // a second try reconnects
+            if (!c->open) {
+                lh_err[0] = 0;
+                if (lh_tls_open(c, g_cfg.sig_host, 443, tls_epoch())) { snprintf(err, sizeof err, "%s", lh_err); break; }
+                char path[1300]; snprintf(path, sizeof path, "%s/ws?token=%s", g_cfg.sig_path, g_cfg.token);
+                if (lh_ws_open(c, g_cfg.sig_host, path)) { snprintf(err, sizeof err, "%s", lh_err); lh_close(c); break; }
+            }
+            jpg = lh_get_thumbnail(c, g_cfg.home_id, id, ++rpc, &jl);
+            if (!jpg) { snprintf(err, sizeof err, "%s", lh_err); lh_close(c); }
+        }
+        last_use = time(NULL);
+        unsigned char *rgb = NULL; int w = 0, h = 0;
+        if (jpg) {
+            int iw, ih, ch; unsigned char *full = stbi_load_from_memory(jpg, (int)jl, &iw, &ih, &ch, 3); free(jpg);
+            if (full) {                                                                              // scale down (nearest) to at most PIC_MAX
+                int lg = iw > ih ? iw : ih; w = iw * (lg > PIC_MAX ? PIC_MAX : lg) / lg; h = ih * (lg > PIC_MAX ? PIC_MAX : lg) / lg; if (w < 1) w = 1; if (h < 1) h = 1;
+                rgb = malloc((size_t)w * h * 3);
+                for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) memcpy(rgb + ((size_t)y * w + x) * 3, full + ((size_t)(y * ih / h) * iw + (x * iw / w)) * 3, 3);
+                stbi_image_free(full);
+            } else snprintf(err, sizeof err, "cannot decode the picture");
+        }
+        pthread_mutex_lock(&g_pm);
+        Pic *p = pic_find(id);
+        if (p) { if (rgb) { p->rgb = rgb; p->w = w; p->h = h; p->state = 2; rgb = NULL; } else { p->state = 3; snprintf(p->err, sizeof p->err, "%s", err[0] ? err : "failed"); } }
+        pthread_mutex_unlock(&g_pm);
+        free(rgb);
+    }
+    lh_close(c); free(c); return NULL;
+}
+
+static void blit_rgb(Surf *s, int x0, int y0, const unsigned char *rgb, int w, int h, int clip_y0, int clip_y1) {
+    for (int y = 0; y < h; y++) {
+        int sy = y0 + y; if (sy < clip_y0 || sy >= clip_y1 || sy < 0 || sy >= s->h) continue;
+        uint32_t *row = s->px + (size_t)sy * s->stride;
+        for (int x = 0; x < w; x++) {
+            int sx = x0 + x; if (sx < 0 || sx >= s->w) continue;
+            const unsigned char *q = rgb + ((size_t)y * w + x) * 3;
+            row[sx] = ((uint32_t)q[0] << s->rs) | ((uint32_t)q[1] << s->gs) | ((uint32_t)q[2] << s->bs) | s->alpha;
+        }
+    }
+}
+
 // ---------------------------------------------------------------- text layout
 
 static int wrap_lines(const char *text, int cols, int *starts, int *lens, int max) {   // word wrap; returns the number of lines
@@ -367,6 +479,13 @@ static int wrap_lines(const char *text, int cols, int *starts, int *lens, int ma
     return n ? n : 1;
 }
 
+static int pic_extra(const Msg *m) {                              // extra height in a message bubble for its picture
+    if (!m->has_thumb || m->deleted) return 0;
+    pthread_mutex_lock(&g_pm); Pic *p = pic_find(m->id); int h = !p ? 0 : (p->state == 2 ? p->h + 8 : (p->state == 3 ? 22 : 0)); pthread_mutex_unlock(&g_pm);
+    return h;
+}
+static void queue_pics(void) { int n = 0; for (int i = g_nmsg - 1; i >= 0 && n < 8; i--) if (g_msg[i].has_thumb && !g_msg[i].deleted) { pic_request(g_msg[i].id); n++; } }
+
 enum { V_LIST, V_CHAT };
 
 int main(int argc, char **argv) {
@@ -377,6 +496,8 @@ int main(int argc, char **argv) {
     if (plat_touch_init(&pi)) return 1;
     int W = pi.w, H = pi.h;
     load_config(dir);
+    signal(SIGPIPE, SIG_IGN);
+    if (g_have_cfg && g_cfg.sig_host[0] && g_cfg.home_id[0]) { pthread_t th; if (pthread_create(&th, NULL, pic_worker, NULL) == 0) pthread_detach(th); }
 
     int key_h = W / 8, kbd_h = key_h * 5 + 6, kb_y = H - kbd_h;
     Kbd kb; kbd_init(&kb, 0, kb_y, W, kbd_h);
@@ -411,6 +532,9 @@ int main(int argc, char **argv) {
             t_fetch = ui_now(); dirty = 3;
         }
         if (t - t_blink >= 0.5) { blink ^= 1; t_blink = t; if (view == V_CHAT) dirty = 2; }
+        { static int last_n = -1; static int last_view = -1;
+          if (view == V_CHAT && (g_nmsg != last_n || last_view != view)) { queue_pics(); dirty = 3; }
+          last_n = g_nmsg; last_view = view; }
         if (u.changed || u.tapped) dirty = 3;
         if (dirty <= 0) { usleep(10000); continue; }
         dirty--;
@@ -451,7 +575,7 @@ int main(int argc, char **argv) {
             int my = BAR, mh = kb_y - IN_H - BAR, cols = (W - 24) / CW;
             int total = 12;
             static int st[64], ln[64];
-            for (int i = 0; i < g_nmsg; i++) total += LH + wrap_lines(g_msg[i].body, cols, st, ln, 64) * LH + 12;
+            for (int i = 0; i < g_nmsg; i++) total += LH + wrap_lines(g_msg[i].body, cols, st, ln, 64) * LH + 12 + pic_extra(&g_msg[i]);
             int maxs = total - mh; if (maxs < 0) maxs = 0;
             if (follow && chat_sc.pos > maxs) chat_sc.pos = maxs;
             int before = chat_sc.pos;
@@ -459,7 +583,7 @@ int main(int argc, char **argv) {
             if (chat_sc.pos < before - 4) follow = 0; else if (chat_sc.pos >= maxs) follow = 1;
             int y = my + 8 - chat_sc.pos;
             for (int i = 0; i < g_nmsg; i++) {
-                int nl = wrap_lines(g_msg[i].body, cols, st, ln, 64), h = LH + nl * LH + 12;
+                int nl = wrap_lines(g_msg[i].body, cols, st, ln, 64), ex = pic_extra(&g_msg[i]), h = LH + nl * LH + 12 + ex;
                 if (y + h > my && y < my + mh) {
                     int mine = !strcmp(g_msg[i].sender, g_cfg.person);
                     draw_rect(&s, 4, y, W - 8, h - 6, mine ? 0x1D3A2C : 0x1A2230);
@@ -469,6 +593,13 @@ int main(int argc, char **argv) {
                         char line[300]; int ll = ln[l] < 299 ? ln[l] : 299; memcpy(line, g_msg[i].body + st[l], (size_t)ll); line[ll] = 0;
                         int ly2 = y + LH - 4 + l * LH;
                         if (ly2 + LH > my && ly2 < my + mh) ui_label(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8);
+                    }
+                    if (ex) {
+                        int iy2 = y + LH - 4 + nl * LH + 4;
+                        pthread_mutex_lock(&g_pm); Pic *pp = pic_find(g_msg[i].id);
+                        if (pp && pp->state == 2) blit_rgb(&s, 12, iy2, pp->rgb, pp->w, pp->h, my, my + mh);
+                        else if (pp && pp->state == 3 && iy2 + 16 > my && iy2 < my + mh) { char eb[100]; snprintf(eb, sizeof eb, "(picture: %.70s)", pp->err); ui_label(&u, 12, iy2, 1, eb, 0xFFAA66); }
+                        pthread_mutex_unlock(&g_pm);
                     }
                 }
                 y += h;
@@ -495,6 +626,7 @@ int main(int argc, char **argv) {
         else if (status[0] && view == V_CHAT && strcmp(status, "sent") && strcmp(status, "loading...")) { draw_rect(&s, 0, BAR, W, 26, 0x4A2A2A); char sb[120]; ui_fit(sb, sizeof sb, status, (W - 16) / 8); ui_label(&u, 8, BAR + 5, 1, sb, 0xFFCC99); }
         plat_flip();
     }
+    g_pic_quit = 1; pthread_mutex_lock(&g_pm); pthread_cond_broadcast(&g_pc); pthread_mutex_unlock(&g_pm);
     free_messages();
     plat_close();
     return 0;

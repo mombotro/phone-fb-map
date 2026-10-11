@@ -209,8 +209,9 @@ def android_up(dev, log):
     b = PLATFORMS["android"]["base"]
     dev.sh("echo off > %s/fbboot_off" % b, timeout=15)                      # the boot loop stops when this exists
     ps = dev.adb("shell", "ps", timeout=15).stdout.decode(errors="replace").replace("\r", "")
-    pids = [ln.split()[1] for ln in ps.splitlines() if "fblauncher" in ln or "/tmp/paint" in ln]
-    for pid in pids:
+    names = ("fblauncher", "fbrun", "paint", "fbshell", "notes", "timer", "longhouse", "musicplayer", "condemo", "bars")
+    pids = [ln.split()[1] for ln in ps.splitlines() if ln.split() and ln.split()[-1].split("/")[-1] in names and len(ln.split()) > 1]
+    for pid in pids:                                   # the picker AND the tools it started: a running program cannot be overwritten
         dev.sh("kill %s" % pid, timeout=15)
     for _ in range(40):
         time.sleep(2)

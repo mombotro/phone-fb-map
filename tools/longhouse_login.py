@@ -69,7 +69,12 @@ def main():
         print("warning: could not fetch the roster (%s). Names will show as ids." % e)
         directory = {"persons": [], "homes": []}
     names = {p["id"]: p.get("displayName") or p["id"][:8] for p in directory.get("persons", []) if "id" in p}
-    session = {"home": a.home, "token": body["token"], "refreshSecret": body.get("refreshSecret", ""),
+    import socket
+    try:
+        sig_ip = socket.gethostbyname(urllib.parse.urlparse(SIGNALING).hostname)             # the phone cannot look names up, so it gets the number
+    except OSError:
+        sig_ip = ""
+    session = {"home": a.home, "signaling": SIGNALING, "signalingIp": sig_ip, "token": body["token"], "refreshSecret": body.get("refreshSecret", ""),
                "personId": seat.get("personId"), "homeId": seat.get("homeId"), "displayName": seat.get("displayName"),
                "signedInAt": int(time.time()), "validSeconds": 86400}
     os.makedirs(PRIVATE, exist_ok=True)
