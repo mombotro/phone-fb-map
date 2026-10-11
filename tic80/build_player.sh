@@ -2,6 +2,8 @@
 # Builds the TIC-80 player for iOS and Android into ../build. Run build_core.sh first.
 set -e
 cd "$(dirname "$0")"
+../common/fetch_stb_truetype.sh >/dev/null   # draw.h includes the font code (ttf.h)
+
 SDK=${IOS_SDK:-$HOME/sdks/iPhoneOS9.3.sdk}
 NDK=$(ls -d "$HOME"/Library/Android/sdk/ndk/27.* | head -1)
 ACC=$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang

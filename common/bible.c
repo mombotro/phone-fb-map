@@ -5,8 +5,14 @@
 #include "draw.h"
 #include "kbd.h"
 #include "ui.h"
+#include "ttf.h"
 #include <unistd.h>
 
+#ifdef __APPLE__
+#define FONT_DIR "/var/root/data/fonts"
+#else
+#define FONT_DIR "/data/local/tmp/data/fonts"
+#endif
 #ifdef __APPLE__
 #define DEFAULT_DIR "/var/root/data/bible"
 #else
@@ -22,7 +28,7 @@ typedef struct { int verse; int off; int len; } Line;                   // verse
 
 static Book books[MAXB]; static int nbooks;
 static char *text; static const char **vtext; static int *vnum; static int nverses;
-static Line lines[MAXLINES]; static int nlines, indent;
+static Line lines[MAXLINES]; static int nlines, indent;                    // indent: pixels
 static char dir[256] = DEFAULT_DIR;
 
 static int load_bible(const char *path) {
@@ -53,19 +59,19 @@ next:   if (!e) break;
     return nbooks ? 0 : -1;
 }
 
-// Break one chapter into screen lines of `cols` characters. A verse number sits in front of its first line, and the
+// Break one chapter into screen lines that fit maxw pixels, using the font in use. A verse number sits in front of its first line, and the
 // other lines of the verse are indented to the same place.
-static void layout(int bk, int ch, int cols) {
+static void layout(int bk, int ch, int maxw) {
     Book *b = &books[bk]; nlines = 0;
     int from = b->cstart[ch], to = b->cstart[ch + 1], maxv = 0;
     for (int i = from; i < to; i++) if (vnum[i] > maxv) maxv = vnum[i];
-    indent = (maxv >= 100 ? 3 : maxv >= 10 ? 2 : 1) + 1;
-    int avail = cols - indent; if (avail < 8) avail = 8;
+    indent = rdr_width("0000", maxv >= 100 ? 3 : maxv >= 10 ? 2 : 1) + rdr_width(" ", 1);
+    int avail = maxw - indent; if (avail < 60) avail = 60;
     for (int i = from; i < to && nlines < MAXLINES - 1; i++) {
         const char *t = vtext[i]; int len = (int)strlen(t), pos = 0, first = 1;
         while (pos < len && nlines < MAXLINES - 1) {
             int n = len - pos;
-            if (n > avail) { n = avail; int k = n; while (k > 0 && t[pos + k] != ' ') k--; if (k > 0) n = k; }
+            n = rdr_wrap(t + pos, n, avail);
             lines[nlines].verse = first ? vnum[i] : 0; lines[nlines].off = (int)(t - text) + pos; lines[nlines].len = n; nlines++;
             pos += n; while (pos < len && t[pos] == ' ') pos++;
             first = 0;
@@ -92,6 +98,7 @@ int main(int argc, char **argv) {
     char path[300]; snprintf(path, sizeof path, "%s/asv.txt", dir);
     if (argc > 2) { snprintf(path, sizeof path, "%s", argv[2]); char *sl = strrchr(path, '/'); if (sl) { snprintf(dir, sizeof dir, "%.*s", (int)(sl - path), path); } }
     int loaded = load_bible(path) == 0;
+    rdr_use(FONT_DIR);                                             // the reading font chosen in the picker settings, or the chunky one
     PlatInfo pi;
     if (plat_init(&pi)) return 1;
     if (plat_touch_init(&pi)) return 1;
@@ -158,8 +165,8 @@ int main(int argc, char **argv) {
                 if (u.tapped && u.tap_y >= ly && ui_inside(u.tap_x, u.tap_y, x, y, cell, cell)) { ch = c; laid = 0; sc_read.pos = 0; view = V_READ; u.tapped = 0; save_pos(bk, ch, fs); dirty = 3; }
             }
         } else {
-            int cols = (W - 24) / (8 * fs), rh = 16 * fs + 6;
-            if (!laid) { layout(bk, ch, cols); laid = 1; }
+            rdr_size(fs); int rh = rdr_lineh() + 2;
+            if (!laid) { layout(bk, ch, W - 24); laid = 1; }
             int ly = BAR, lh = H - BAR - FOOT;
             ui_scroll(&u, &sc_read, 0, ly, W, lh, nlines * rh + 16);
             for (int i = 0; i < nlines; i++) {
@@ -167,8 +174,8 @@ int main(int argc, char **argv) {
                 if (y + rh <= ly || y >= ly + lh) continue;
                 char buf[256]; int n2 = lines[i].len < 255 ? lines[i].len : 255;
                 memcpy(buf, text + lines[i].off, n2); buf[n2] = 0;
-                if (lines[i].verse) { char vb[8]; snprintf(vb, sizeof vb, "%d", lines[i].verse); draw_text(&s, 12, y, fs, vb, 0x7DA7DB); }
-                draw_text(&s, 12 + indent * 8 * fs, y, fs, buf, 0xE8E8E8);
+                if (lines[i].verse) { char vb[8]; snprintf(vb, sizeof vb, "%d", lines[i].verse); rdr_draw(&s, 12, y, vb, (int)strlen(vb), 0x7DA7DB); }
+                rdr_draw(&s, 12 + indent, y, buf, n2, 0xE8E8E8);
             }
             // the bars are drawn last so the text slides under them
             draw_rect(&s, 0, 0, W, BAR, 0x26303E);

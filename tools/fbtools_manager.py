@@ -28,7 +28,8 @@ APPS = [
     {"id": "bible", "name": "Bible", "desc": "The American Standard Version. Read by book and chapter.", "bin": "bible", "data": ["data/bible"], "extra": ["data/bible/asv.txt"]},
     {"id": "reader", "name": "Reader", "desc": "Read .txt and .epub books. Copy them to the books folder with Phone Files.", "bin": "reader", "data": ["data/books"]},
     {"id": "pixel", "name": "Pixel", "desc": "Draw pixel art. Saves .pix files and .bmp pictures.", "bin": "pixel", "data": ["data/pixel"]},
-    {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts.", "bin": "tic80", "data": ["carts"], "only": ["ios7"]},
+    {"id": "fonts", "name": "Reading fonts", "desc": "OpenDyslexic, Atkinson Hyperlegible, and Lexend for Reader and Bible. Choose one in the momPKT settings.", "bin": None, "data": ["data/fonts"], "extra": ["data/fonts/OpenDyslexic.otf", "data/fonts/AtkinsonHyperlegible.ttf", "data/fonts/Lexend.ttf"]},
+    {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic and .lua). Put carts in the carts folder. Sound works on iPhone only.", "bin": "tic80", "data": ["carts"], "only": ["ios7", "android"]},
     {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
     {"id": "console", "name": "Console", "desc": "A text console demo.", "bin": "condemo", "only": ["android"]},
@@ -65,6 +66,7 @@ def apps_for(plat):
 
 
 def app_available(plat, a):
+    if a["bin"] is None: return all(os.path.exists(pl(plat, x)) for x in a.get("extra", []))      # an app that is only data files
     return os.path.exists(pl(plat, "bin/" + a["bin"]))
 
 
@@ -85,7 +87,7 @@ def core_files(plat, tweak=True):
 
 def app_files(plat, a):
     b = PLATFORMS[plat]["base"]
-    out = [("bin/" + a["bin"], b + "/" + a["bin"], 0o755)]
+    out = [("bin/" + a["bin"], b + "/" + a["bin"], 0o755)] if a["bin"] else []
     if plat == "android":
         out += [(x, b + "/" + x, 0o644) for x in a.get("android_extra", [])]
     out += [(x, b + "/" + x, 0o644) for x in a.get("extra", [])]

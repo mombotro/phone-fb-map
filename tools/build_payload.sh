@@ -36,7 +36,7 @@ clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-un
 clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache \
     -install_name /usr/lib/FBMode12.dylib -o $P/ios12/lib/FBMode12.dylib -x objective-c tweak/ios12/FBMode12.m -x none build/stubs/CoreFoundation.tbd
 echo "== Android"
-for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer bible:bible reader:reader pixel:pixel longhouse:longhouse musicplayer:musicplayer condemo:condemo; do
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer bible:bible reader:reader pixel:pixel longhouse:longhouse musicplayer:musicplayer tic80:tic80 condemo:condemo; do
     cp build/${f##*:}_android $P/android/bin/${f%%:*}
 done
 cp build/fbls_android $P/android/bin/fbls; cp build/fbrun_android $P/android/bin/fbrun
@@ -45,4 +45,7 @@ cp launcher/android_apk/FBTools.apk $P/android/FBTools.apk
 if [ -f tools/bible_asv.txt ]; then      # the Bible text, made by tools/make_bible.py from the asv folder
     for d in ios7 ios12 android; do mkdir -p $P/$d/data/bible; cp tools/bible_asv.txt $P/$d/data/bible/asv.txt; done
 else echo "  no tools/bible_asv.txt: run tools/make_bible.py to add the Bible"; fi
+if [ -d tools/fonts ] && ls tools/fonts/* >/dev/null 2>&1; then      # the reading fonts, from tools/fetch_fonts.sh
+    for d in ios7 ios12 android; do mkdir -p $P/$d/data/fonts; cp tools/fonts/* $P/$d/data/fonts/; done
+else echo "  no tools/fonts: run tools/fetch_fonts.sh to add the reading fonts"; fi
 echo "payload ready: $(find $P -type f | wc -l | tr -d ' ') files"

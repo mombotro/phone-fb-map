@@ -2,6 +2,8 @@
 # Builds the music player for iOS into ../build/musicplayer_ios. Needs third_party/ (run fetch_libs.sh).
 set -e
 cd "$(dirname "$0")"
+../common/fetch_stb_truetype.sh >/dev/null   # draw.h includes the font code (ttf.h)
+
 SDK=${IOS_SDK:-$HOME/sdks/iPhoneOS9.3.sdk}
 O=../build/music_obj; mkdir -p "$O"
 cc() { clang -arch armv7 -O2 -miphoneos-version-min=7.0 -isysroot "$SDK" "$@"; }

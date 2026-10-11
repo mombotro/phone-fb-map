@@ -5,8 +5,16 @@
 #include "draw.h"
 #include "kbd.h"
 #include "ui.h"
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#define STBI_NO_THREAD_LOCALS
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#include "third_party/stb_image.h"
 #include "epub.h"
 #include "pdf.h"
+#include "ttf.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -17,6 +25,11 @@
 #define DEFAULT_DIR "/data/local/tmp/data/books"
 #endif
 
+#ifdef __APPLE__
+#define FONT_DIR "/var/root/data/fonts"
+#else
+#define FONT_DIR "/data/local/tmp/data/fonts"
+#endif
 #define MAXBOOKS 300
 typedef struct { char name[200]; int milli; } BookRow;           // milli: how far you read, 0 to 1000
 static BookRow books[MAXBOOKS]; static int nbooks;
@@ -72,8 +85,8 @@ static void scan_books(void) {
     qsort(books, (size_t)nbooks, sizeof books[0], cmp_book);
 }
 
-// Break the text into screen lines of `cols` characters, at spaces when it can.
-static void layout(int cols) {
+// Break the text into screen lines that fit maxw pixels, at spaces when it can. The widths come from the font in use.
+static void layout(int maxw) {
     nlines = 0;
     size_t i = 0;
     while (i <= tlen) {
@@ -82,7 +95,7 @@ static void layout(int cols) {
         if (e == i) { /* blank line */ }
         while (p < e || (e == i && p == i)) {
             size_t n = e - p;
-            if (n > (size_t)cols) { n = (size_t)cols; size_t k = n; while (k > 0 && text[p + k] != ' ') k--; if (k > 0) n = k; }
+            n = (size_t)rdr_wrap(text + p, (int)n, maxw);
             if (nlines == lcap) { lcap = lcap ? lcap * 2 : 4096; lines = realloc(lines, (size_t)lcap * sizeof *lines); if (!lines) { nlines = 0; return; } }
             lines[nlines].start = (int)p; lines[nlines].len = (int)n; nlines++;
             p += n; while (p < e && text[p] == ' ') p++;
@@ -98,7 +111,22 @@ static int line_at(size_t off) {                                   // the line t
     return lo;
 }
 
-enum { V_LIB, V_READ };
+enum { V_LIB, V_READ, V_PAGE };
+
+// A PDF can also be shown as page pictures (scans have no text). pimg is the page, packed for the screen, zoom times the screen wide.
+static PdfDoc *doc; static int npages, pgno, zoom = 1, pw, ph, panx, pany, page_pending;
+static uint32_t *pimg; static char perr[96];
+static void close_book(void) {
+    free(text); text = NULL; free(pimg); pimg = NULL; if (doc) pdf_doc_close(doc); doc = NULL; npages = 0; page_pending = 0;
+}
+static void load_page(const PlatInfo *pi, int W) {
+    free(pimg); pimg = NULL; perr[0] = 0; pw = ph = 0; panx = pany = 0;
+    int w, h; pdf_error[0] = 0;
+    uint32_t *im = pdf_doc_image(doc, pgno, W * zoom, &w, &h);
+    if (!im) { snprintf(perr, sizeof perr, "%s", pdf_error[0] ? pdf_error : "no picture on this page"); return; }
+    for (long i = 0; i < (long)w * h; i++) { uint32_t c = im[i]; im[i] = (((c >> 16) & 255) << pi->rs) | (((c >> 8) & 255) << pi->gs) | ((c & 255) << pi->bs) | pi->alpha; }
+    pimg = im; pw = w; ph = h;
+}
 
 int main(int argc, char **argv) {
     double seconds = argc > 1 ? atof(argv[1]) : 86400;
@@ -117,6 +145,7 @@ int main(int argc, char **argv) {
 
     { char p[300]; snprintf(p, sizeof p, "%s/.size", dir); FILE *f = fopen(p, "r"); if (f) { int v; if (fscanf(f, "%d", &v) == 1 && v >= 1 && v <= 3) fs = v; fclose(f); } }
     mkdir(dir, 0755);
+    rdr_use(FONT_DIR);                                             // the reading font chosen in the picker settings, or the chunky one
     scan_books();
 
     while (!quit && ui_now() - t0 < seconds) {
@@ -159,11 +188,43 @@ int main(int argc, char **argv) {
                 ui_label(&u, 16, ly + 96, 1, dir, 0x8899AA);
             }
             if (status[0]) ui_label(&u, 16, H - 28, 1, status, 0xFF8888);
+        } else if (view == V_PAGE) {
+            int ly = BAR, lh = H - BAR - FOOT;
+            if (u.down && u.moved && ui_inside(u.start_x, u.start_y, 0, ly, W, lh)) { panx -= u.drag_dx; pany -= u.drag_dy; dirty = 3; }
+            if (panx > pw - W) panx = pw - W; if (panx < 0) panx = 0;
+            if (pany > ph - lh) pany = ph - lh; if (pany < 0) pany = 0;
+            if (pimg) {
+                for (int y = 0; y < lh && y + pany < ph; y++) {
+                    const uint32_t *src = pimg + (size_t)(y + pany) * pw + panx;
+                    int cnt = pw - panx < W ? pw - panx : W;
+                    memcpy(px + (size_t)(ly + y) * stride, src, (size_t)cnt * 4);
+                }
+            } else if (!page_pending) {
+                ui_label(&u, 16, ly + 40, 2, "No picture to show.", 0xF0F0F0);
+                ui_label(&u, 16, ly + 90, 1, perr, 0xFF8888);
+                if (text) ui_label(&u, 16, ly + 120, 1, "This page is text. Tap ABC to read it.", 0x8899AA);
+            }
+            draw_rect(&s, 0, 0, W, BAR, 0x26303E);
+            draw_rect(&s, 0, H - FOOT, W, FOOT, 0x26303E);
+            if (ui_button(&u, 8, 8, 128, BAR - 16, "BOOKS", 0x34608F)) {
+                books[cur].milli = npages > 1 ? pgno * 1000 / (npages - 1) : 0; pos_set(books[cur].name, books[cur].milli);
+                close_book(); view = V_LIB; dirty = 3;
+            }
+            int zb = W - 80; char zl[8]; snprintf(zl, sizeof zl, "%dx", zoom);
+            if (view == V_PAGE && ui_button(&u, zb, 8, 72, BAR - 16, zl, 0x2E7D4F)) { zoom = zoom % 3 + 1; page_pending = 1; dirty = 3; }
+            if (view == V_PAGE && text && ui_button(&u, zb - 80, 8, 72, BAR - 16, "ABC", 0x2E7D4F)) { view = V_READ; laid_fs = 0; dirty = 3; }
+            if (view == V_PAGE) {
+                char t[64]; snprintf(t, sizeof t, "Page %d of %d", pgno + 1, npages);
+                ui_label(&u, 148, 16, 2, t, 0xFFFFFF);
+                int bw = (W - 24) / 2;
+                if (pgno > 0 && ui_button(&u, 8, H - FOOT + 8, bw, FOOT - 16, "< PREV", 0x34608F)) { pgno--; page_pending = 1; dirty = 3; }
+                if (pgno < npages - 1 && ui_button(&u, 16 + bw, H - FOOT + 8, bw, FOOT - 16, "NEXT >", 0x34608F)) { pgno++; page_pending = 1; dirty = 3; }
+            }
         } else {
-            int cols = (W - 24) / (8 * fs), rh = 16 * fs + 4;
+            rdr_size(fs); int maxw = W - 24, rh = rdr_lineh();
             if (laid_fs != fs) {                                   // first time, or the text size changed: keep the place
                 int top = sc_read.pos / lay_rh; size_t off = (nlines && top < nlines) ? (size_t)lines[top].start : 0;
-                layout(cols); laid_fs = fs; lay_rh = rh;
+                layout(maxw); laid_fs = fs; lay_rh = rh;
                 sc_read.pos = nlines ? line_at(off) * rh : 0;
             }
             int ly = BAR, lh = H - BAR - FOOT;
@@ -175,13 +236,13 @@ int main(int argc, char **argv) {
                 if (y + rh <= ly || !lines[i].len) continue;
                 char buf[256]; int n2 = lines[i].len < 255 ? lines[i].len : 255;
                 memcpy(buf, text + lines[i].start, (size_t)n2); buf[n2] = 0;
-                draw_text(&s, 12, y, fs, buf, 0xE8E8E8);
+                rdr_draw(&s, 12, y, buf, n2, 0xE8E8E8);
             }
             draw_rect(&s, 0, 0, W, BAR, 0x26303E);                  // bars on top so the text slides under them
             draw_rect(&s, 0, H - FOOT, W, FOOT, 0x26303E);
             if (ui_button(&u, 8, 8, 128, BAR - 16, "BOOKS", 0x34608F)) {
                 int top = sc_read.pos / rh; books[cur].milli = nlines > 1 ? (top >= nlines ? 1000 : top * 1000 / (nlines - 1)) : 0;
-                pos_set(books[cur].name, books[cur].milli); free(text); text = NULL; view = V_LIB; dirty = 3;
+                pos_set(books[cur].name, books[cur].milli); close_book(); view = V_LIB; dirty = 3;
             }
             if (view == V_READ) {
                 if (ui_button(&u, W - 80, 8, 72, BAR - 16, "A", 0x2E7D4F)) {
@@ -189,7 +250,8 @@ int main(int argc, char **argv) {
                     char p[300]; snprintf(p, sizeof p, "%s/.size", dir); FILE *f = fopen(p, "w"); if (f) { fprintf(f, "%d\n", fs); fclose(f); }
                 }
                 char t[96], buf[128]; snprintf(buf, sizeof buf, "%s", books[cur].name); char *dot = strrchr(buf, '.'); if (dot) *dot = 0;
-                ui_fit(t, sizeof t, buf, (W - 240) / 16);
+                if (doc && ui_button(&u, W - 160, 8, 72, BAR - 16, "IMG", 0x2E7D4F)) { view = V_PAGE; page_pending = 1; dirty = 3; }
+                ui_fit(t, sizeof t, buf, (W - (doc ? 330 : 240)) / 16);
                 ui_label(&u, 148, 16, 2, t, 0xFFFFFF);
                 // footer: page back, a progress bar you can tap, page forward
                 int page = (lh / rh - 1) * rh; if (page < rh) page = rh;
@@ -208,25 +270,38 @@ int main(int argc, char **argv) {
         }
         plat_flip();
 
+        if (page_pending && view == V_PAGE) {                       // draw "Loading", then decode the picture (a big scan takes a few seconds)
+            page_pending = 0;
+            { int st2; uint32_t *px2 = plat_begin(&st2); Surf s2 = { px2, st2, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
+              draw_rect(&s2, 0, BAR, W, H - BAR - FOOT, 0x10161E); draw_text(&s2, 16, BAR + 40, 2, "Loading page...", 0xFFFFFF); plat_flip(); }
+            load_page(&pi, W); dirty = 3;
+        }
         if (loading) {                                              // a book is chosen: show the screen once, then load (a big EPUB takes a while)
             loading = 0; status[0] = 0;
-            draw_rect(&s, 0, BAR, W, H - BAR, 0x10161E);
-            ui_label(&u, 16, BAR + 40, 2, "Opening...", 0xFFFFFF);
-            plat_flip();
+            { int st2; uint32_t *px2 = plat_begin(&st2); Surf s2 = { px2, st2, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
+              draw_rect(&s2, 0, BAR, W, H - BAR, 0x10161E); draw_text(&s2, 16, BAR + 40, 2, "Opening...", 0xFFFFFF); plat_flip(); }
             char path[512]; snprintf(path, sizeof path, "%s/%s", dir, books[cur].name);
-            free(text); pdf_error[0] = 0;
-            text = eb_has_ext(path, ".pdf") ? pdf_text(path, &tlen) : book_load(path, &tlen);
+            close_book(); pdf_error[0] = 0;
+            if (eb_has_ext(path, ".pdf")) {
+                doc = pdf_doc_open(path);
+                if (doc) { npages = pdf_doc_npages(doc); text = pdf_doc_text(doc, &tlen); }
+                if (doc && !text) {                                    // no text: show the pages as pictures
+                    pgno = npages > 1 ? books[cur].milli * (npages - 1) / 1000 : 0; zoom = 1;
+                    view = V_PAGE; page_pending = 1; dirty = 3; continue;
+                }
+            } else text = book_load(path, &tlen);
             if (!text || !tlen) { free(text); text = NULL; snprintf(status, sizeof status, "%s: %s", books[cur].name, pdf_error[0] ? pdf_error : "cannot read it"); }
             else {
                 view = V_READ; laid_fs = 0; nlines = 0; sc_read.pos = 0;
-                int cols = (W - 24) / (8 * fs); layout(cols); laid_fs = fs;
-                int rh = 16 * fs + 4; lay_rh = rh;
+                rdr_size(fs); layout(W - 24); laid_fs = fs;
+                int rh = rdr_lineh(); lay_rh = rh;
                 sc_read.pos = nlines > 1 ? (int)((long)books[cur].milli * (nlines - 1) / 1000) * rh : 0;
             }
             dirty = 3;
         }
     }
-    if (view == V_READ && cur >= 0) { int rh = 16 * fs + 4, top = sc_read.pos / rh; pos_set(books[cur].name, nlines > 1 ? top * 1000 / (nlines - 1) : 0); }
+    if (view == V_PAGE && cur >= 0 && npages > 1) pos_set(books[cur].name, pgno * 1000 / (npages - 1));
+    if (view == V_READ && cur >= 0) { int rh = rdr_lineh(), top = sc_read.pos / rh; pos_set(books[cur].name, nlines > 1 ? top * 1000 / (nlines - 1) : 0); }
     plat_close();
     return 0;
 }

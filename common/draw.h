@@ -66,8 +66,13 @@ static void draw_line(Surf *s, int x0, int y0, int x1, int y1, int r, uint32_t r
     for (int i = 0; i <= steps; i++) draw_disk(s, x0 + dx * i / steps, y0 + dy * i / steps, r, rgb);
 }
 
-// Text with the 8x16 font, integer scale, transparent background.
-static void draw_text(Surf *s, int x, int y, int scale, const char *str, uint32_t rgb) {
+#ifdef UI_FONT
+// ttf.h: draws the text with the reading font chosen in the picker settings. Returns 0 when no font is chosen.
+static int ui_font_draw(Surf *s, int x, int y, int scale, const char *str, uint32_t rgb);
+#endif
+
+// Text with the chunky 8x16 bitmap font, integer scale, transparent background. Used where a fixed cell matters (editors).
+static void draw_text_plain(Surf *s, int x, int y, int scale, const char *str, uint32_t rgb) {
     uint32_t c;
     if (s->theme && x >= 0 && y >= 0 && x < s->w && y < s->h) {               // look at what is under the first letter, and keep the contrast
         uint32_t d = s->px[(size_t)y * s->stride + x];
@@ -96,5 +101,18 @@ static void draw_text(Surf *s, int x, int y, int scale, const char *str, uint32_
         }
     }
 }
+
+// Text at a cell size of 8*scale by 16*scale. With a reading font chosen (picker settings), the same text is drawn in that font,
+// sized so its average letter is as wide as a chunky cell. Without one, it is the chunky bitmap font.
+static void draw_text(Surf *s, int x, int y, int scale, const char *str, uint32_t rgb) {
+#ifdef UI_FONT
+    if (ui_font_draw(s, x, y, scale, str, rgb)) return;
+#endif
+    draw_text_plain(s, x, y, scale, str, rgb);
+}
+
+#ifdef UI_FONT
+#include "ttf.h"
+#endif
 
 #endif

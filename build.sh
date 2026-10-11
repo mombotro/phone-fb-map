@@ -24,6 +24,7 @@ android() { "$ACC" -O2 -static -fno-pie -fno-emulated-tls -o "build/$2_android" 
 
 # The Longhouse chat app needs BearSSL (HTTPS) and stb_image (JPEG). common/fetch_bearssl.sh and common/fetch_stb_image.sh get the source.
 common/fetch_stb_image.sh >/dev/null
+common/fetch_stb_truetype.sh >/dev/null
 for p in ios7 android; do [ -f build/bearssl/$p/libbearssl.a ] || common/build_bearssl.sh $p >/dev/null; done
 BR=common/third_party/bearssl/inc
 ios fbdemo.c fbdemo

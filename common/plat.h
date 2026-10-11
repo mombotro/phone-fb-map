@@ -4,6 +4,7 @@
 // plat_begin() returns the back buffer; plat_flip() shows it and rotates buffers.
 #ifndef PLAT_H
 #define PLAT_H
+#define UI_FONT 1                       // draw_text can use the reading font chosen in the picker settings (see ttf.h)
 #include <stdint.h>
 #include <stdio.h>
 

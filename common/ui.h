@@ -26,9 +26,9 @@ typedef struct {
     int moved;                      // it moved more than the slop since it began
     double t_start;
     int tapped, tap_x, tap_y;       // true for one frame after a short, still touch ends
-    int drag_dy;                    // vertical movement this frame while dragging
+    int drag_dy, drag_dx;           // movement this frame while dragging
     int changed;                    // the pointer did something this frame: redraw
-    int prev_down, last_y;
+    int prev_down, last_y, last_x;
     int kb_prev[16];                // keyboard: which touch ids were down last frame
     double kb_t[16], kb_rep[16];
 } Ui;
@@ -36,16 +36,16 @@ typedef struct {
 #define UI_SLOP 16
 
 static void ui_poll(Ui *u, const PlatTouch *t, int n) {
-    u->tapped = 0; u->drag_dy = 0; u->changed = 0;
+    u->tapped = 0; u->drag_dy = 0; u->drag_dx = 0; u->changed = 0;
     int d = n > 0;
     if (d) { u->x = t[0].x; u->y = t[0].y; }
     if (d && !u->prev_down) {                                     // touch began
-        u->start_x = u->x; u->start_y = u->y; u->moved = 0; u->t_start = ui_now(); u->last_y = u->y; u->changed = 1;
+        u->start_x = u->x; u->start_y = u->y; u->moved = 0; u->t_start = ui_now(); u->last_y = u->y; u->last_x = u->x; u->changed = 1;
     }
     if (d && u->prev_down) {
         if (abs(u->x - u->start_x) > UI_SLOP || abs(u->y - u->start_y) > UI_SLOP) u->moved = 1;
-        if (u->moved) { u->drag_dy = u->y - u->last_y; if (u->drag_dy) u->changed = 1; }
-        u->last_y = u->y;
+        if (u->moved) { u->drag_dy = u->y - u->last_y; u->drag_dx = u->x - u->last_x; if (u->drag_dy || u->drag_dx) u->changed = 1; }
+        u->last_y = u->y; u->last_x = u->x;
     }
     if (!d && u->prev_down) {                                     // touch ended
         if (!u->moved && ui_now() - u->t_start < 0.8) { u->tapped = 1; u->tap_x = u->start_x; u->tap_y = u->start_y; }
@@ -227,7 +227,7 @@ static int ui_edit_draw(Ui *u, UiEdit *e, int x, int y, int w, int h, int scale,
             start += 4; len -= 4; off = 4; if (len < 0) len = 0;
         }
         char line[512]; int m = len < 500 ? len : 500; memcpy(line, e->buf + start, m); line[m] = 0;
-        draw_text(u->s, x + off * cw, ty + 2, scale, line, vl[i].box == 2 ? 0x778899 : 0xE8E8E8);
+        draw_text_plain(u->s, x + off * cw, ty + 2, scale, line, vl[i].box == 2 ? 0x778899 : 0xE8E8E8);
         if (vl[i].box == 2) draw_rect(u->s, x + off * cw, ty + 2 + 8 * scale, m * cw, 2, 0x778899);   // strike through
         if (caret_on && i == ci) {
             int col = e->cur - vl[i].start; if (col < 0) col = 0;

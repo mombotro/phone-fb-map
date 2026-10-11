@@ -7,6 +7,7 @@ set -e
 cd "$(dirname "$0")/.."
 SDK=${IOS_SDK:-$HOME/sdks/iPhoneOS9.3.sdk}
 mkdir -p build/ios12 build/stubs
+common/fetch_stb_truetype.sh >/dev/null
 [ -f build/stubs/CoreFoundation.tbd ] || python3 tools/make_cf_stub.py "$SDK" build/stubs/CoreFoundation.tbd
 for t in paint calib fbreset notes timer fbshell bible reader pixel; do
     out=$(clang -target arm64-apple-ios9.0 -O2 -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup \
