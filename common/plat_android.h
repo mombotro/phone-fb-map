@@ -61,6 +61,12 @@ static void plat__wake_panel(void) {
                 strncpy(plat__bl_path, paths[i], sizeof plat__bl_path - 1);
                 plat__bl_old = old;
                 fprintf(stderr, "backlight was %d, set to 128 (%s)\n", old, paths[i]);
+                // The Nexus 4 stays black when it starts with the panel timed out: the first unblank is not enough, a second
+                // blank/unblank after the light is up (what a second start does) brings the picture.
+                usleep(300000);
+                ioctl(plat__fd, FBIOBLANK, FB_BLANK_POWERDOWN);
+                usleep(300000);
+                ioctl(plat__fd, FBIOBLANK, FB_BLANK_UNBLANK);
             }
         }
         close(fd);

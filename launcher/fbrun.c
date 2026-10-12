@@ -105,6 +105,9 @@ static void run_once(const char *prog, long seconds, int kiosk) {
     if (g_stop) { logline("stopped by a signal before starting"); return; }
     logline("stopping Android and starting the program");
     find_composers();
+    // A screen that timed out stays black once Android stops (the Nexus 4). So wake it first and give it a moment.
+    (void)!system("input keyevent 224 >/dev/null 2>&1");
+    usleep(1200000);
     (void)!system("stop");
     composers("stop");
     if (g_ncomp) sleep(1);

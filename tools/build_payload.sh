@@ -13,11 +13,12 @@ launcher/android_apk/build.sh >/dev/null
 NDK=$(ls -d "$HOME"/Library/Android/sdk/ndk/27.* | head -1)
 CC="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
 $CC -O2 -static -fno-pie -fno-emulated-tls -o build/fbls_android tools/fbls.c
+$CC -O2 -static -fno-pie -fno-emulated-tls -o build/fbtime_android tools/fbtime.c
 $CC -O2 -Wall -static -fno-pie -fno-emulated-tls -o build/fbrun_android launcher/fbrun.c
 
 P=tools/payload; rm -rf $P; mkdir -p $P/ios7/bin $P/ios7/FBTools.app $P/ios12/bin $P/ios12/FBTools.app $P/android/bin
 echo "== iPhone 4 (iOS 7)"
-for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer bible:bible reader:reader pixel:pixel longhouse:longhouse musicplayer:musicplayer tic80:tic80 calib:calib fbreset:fbreset; do
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer bible:bible reader:reader pixel:pixel calendar:calendar longhouse:longhouse musicplayer:musicplayer tic80:tic80 calib:calib fbreset:fbreset; do
     src=build/${f##*:}_ios; [ -f "$src" ] && cp "$src" $P/ios7/bin/${f%%:*} || echo "  missing ${f##*:}_ios"
 done
 cp launcher/run_launcher_ios.sh launcher/run_kiosk_ios.sh launcher/com.local.fbkiosk.plist $P/ios7/
@@ -36,15 +37,16 @@ clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-un
 clang -target arm64-apple-ios9.0 -O2 -dynamiclib -isysroot "$SDK" -Wl,-w -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache \
     -install_name /usr/lib/FBMode12.dylib -o $P/ios12/lib/FBMode12.dylib -x objective-c tweak/ios12/FBMode12.m -x none build/stubs/CoreFoundation.tbd
 echo "== Android"
-for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer bible:bible reader:reader pixel:pixel longhouse:longhouse musicplayer:musicplayer tic80:tic80 condemo:condemo; do
+for f in fblauncher:launcher paint:paint fbshell:fbshell notes:notes timer:timer bible:bible reader:reader pixel:pixel calendar:calendar longhouse:longhouse musicplayer:musicplayer tic80:tic80 condemo:condemo; do
     cp build/${f##*:}_android $P/android/bin/${f%%:*}
 done
-cp build/fbls_android $P/android/bin/fbls; cp build/fbrun_android $P/android/bin/fbrun
+cp build/fbls_android $P/android/bin/fbls; cp build/fbtime_android $P/android/bin/fbtime; cp build/fbrun_android $P/android/bin/fbrun
 cp music/android/helper.jar $P/android/musichelper.jar
 cp launcher/android_apk/FBTools.apk $P/android/FBTools.apk
 if [ -f tools/bible_asv.txt ]; then      # the Bible text, made by tools/make_bible.py from the asv folder
     for d in ios7 ios12 android; do mkdir -p $P/$d/data/bible; cp tools/bible_asv.txt $P/$d/data/bible/asv.txt; done
 else echo "  no tools/bible_asv.txt: run tools/make_bible.py to add the Bible"; fi
+if [ -f tools/bible_net.txt ]; then for d in ios7 ios12 android; do mkdir -p $P/$d/data/bible; cp tools/bible_net.txt $P/$d/data/bible/net.txt; done; fi       # the NET Bible, from tools/fetch_net_bible.py
 if [ -d tools/fonts ] && ls tools/fonts/* >/dev/null 2>&1; then      # the reading fonts, from tools/fetch_fonts.sh
     for d in ios7 ios12 android; do mkdir -p $P/$d/data/fonts; cp tools/fonts/* $P/$d/data/fonts/; done
 else echo "  no tools/fonts: run tools/fetch_fonts.sh to add the reading fonts"; fi

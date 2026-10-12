@@ -277,6 +277,14 @@ class Android:
                 self.adbroot = "uid=0" in self.adb("shell", "id", timeout=10).stdout.decode()
         self.root = suroot or self.adbroot
 
+    def ensure_root(self):
+        """A phone that is rooted only through `adb root` goes back to a normal adb shell after every restart. Ask for root again."""
+        if not self.adbroot: return
+        if "uid=0" in self.adb("shell", "id", timeout=10).stdout.decode(): return
+        self.adb("root", timeout=15)
+        run(["adb", "-s", self.serial, "wait-for-device"], timeout=30)
+        time.sleep(1.5)
+
     def sh(self, cmd, **kw):
         wrapped = "su -c " + q(cmd) if (self.root and not self.adbroot) else cmd
         return self.adb("shell", wrapped, **kw)
@@ -624,6 +632,8 @@ def fbtools_start(dev, action, body):
         return fbm.start_job(dev, "%s app" % act.capitalize(), lambda log: fbm.do_app(dev, plat, aid, act, log)).id
     if action == "start":
         return fbm.start_job(dev, "Start FB Tools", lambda log: fbm.do_start(dev, plat, log)).id
+    if action == "clock":
+        return fbm.start_job(dev, "Set the clock", lambda log: fbm.do_set_clock(dev, plat, log)).id
     raise PhoneError("unknown FB Tools action")
 
 

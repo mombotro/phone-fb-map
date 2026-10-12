@@ -27,8 +27,9 @@ APPS = [
     {"id": "notes", "name": "Notes", "desc": "Notes and to-do lists.", "bin": "notes", "data": ["data/notes"]},
     {"id": "timer", "name": "Timer", "desc": "Stopwatch, countdown timer, and alarm.", "bin": "timer", "data": ["data/timer"]},
     {"id": "music", "name": "Music", "desc": "Play your music.", "bin": "musicplayer", "data": ["music"], "android_extra": ["musichelper.jar"]},
-    {"id": "bible", "name": "Bible", "desc": "The American Standard Version. Read by book and chapter.", "bin": "bible", "data": ["data/bible"], "extra": ["data/bible/asv.txt"]},
+    {"id": "bible", "name": "Bible", "desc": "The American Standard Version. Read by book and chapter.", "bin": "bible", "data": ["data/bible"], "extra": ["data/bible/asv.txt"], "extra_optional": ["data/bible/net.txt"]},
     {"id": "reader", "name": "Reader", "desc": "Read .txt and .epub books. Copy them to the books folder with Phone Files.", "bin": "reader", "data": ["data/books"]},
+    {"id": "calendar", "name": "Calendar", "desc": "A month calendar with your events and the dated to-do items of your notes.", "bin": "calendar", "data": ["data/calendar"]},
     {"id": "pixel", "name": "Pixel", "desc": "Draw pixel art. Saves .pix files and .bmp pictures.", "bin": "pixel", "data": ["data/pixel"]},
     {"id": "fonts", "name": "Reading fonts", "desc": "OpenDyslexic, Atkinson Hyperlegible, and Lexend for Reader and Bible. Choose one in the momPKT settings.", "bin": None, "data": ["data/fonts"], "extra": ["data/fonts/OpenDyslexic.otf", "data/fonts/AtkinsonHyperlegible.ttf", "data/fonts/Lexend.ttf"]},
     {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic and .lua). Put carts in the carts folder. Comes with a beat box and a sound test.", "bin": "tic80", "data": ["carts"], "extra": ["carts/beatbox.lua", "carts/soundtest.lua"], "android_extra": ["musichelper.jar"], "only": ["ios7", "android"]},
@@ -84,7 +85,7 @@ def core_files(plat, tweak=True):
         return [("bin/fblauncher", b + "/fblauncher", 0o755), ("bin/fbreset", b + "/fbreset", 0o755),
                 ("run_ios12.sh", b + "/run_ios12.sh", 0o755), ("ios12.entitlements.plist", b + "/ios12.ent", 0o644)] + \
                ([("lib/FBMode12.dylib", "/usr/lib/FBMode12.dylib", 0o755), ("lib/TweakInject.dylib", "/usr/lib/TweakInject.dylib", 0o755)] if tweak else [])
-    return [("bin/fblauncher", b + "/fblauncher", 0o755), ("bin/fbrun", b + "/fbrun", 0o755), ("bin/fbls", b + "/fbls", 0o755)]
+    return [("bin/fblauncher", b + "/fblauncher", 0o755), ("bin/fbrun", b + "/fbrun", 0o755), ("bin/fbls", b + "/fbls", 0o755), ("bin/fbtime", b + "/fbtime", 0o755)]
 
 
 def app_files(plat, a):
@@ -93,6 +94,7 @@ def app_files(plat, a):
     if plat == "android":
         out += [(x, b + "/" + x, 0o644) for x in a.get("android_extra", [])]
     out += [(x, b + "/" + x, 0o644) for x in a.get("extra", [])]
+    out += [(x, b + "/" + x, 0o644) for x in a.get("extra_optional", []) if os.path.exists(pl(plat, x))]       # copied when the payload has it
     return out
 
 
@@ -213,6 +215,7 @@ def problems_for(dev, plat, m, force=False):
 
 def android_up(dev, log):
     """Android's package manager only works while Android runs. The picker (kiosk) stops Android, so stop the picker first."""
+    if hasattr(dev, "ensure_root"): dev.ensure_root()
     r = dev.sh("service check window", timeout=15).stdout.decode()
     if "not found" not in r:
         return
@@ -220,7 +223,7 @@ def android_up(dev, log):
     b = PLATFORMS["android"]["base"]
     dev.sh("echo off > %s/fbboot_off" % b, timeout=15)                      # the boot loop stops when this exists
     ps = dev.adb("shell", "ps", timeout=15).stdout.decode(errors="replace").replace("\r", "")
-    names = ("fblauncher", "fbrun", "paint", "fbshell", "notes", "timer", "longhouse", "bible", "reader", "pixel", "musicplayer", "condemo", "bars")
+    names = ("fblauncher", "fbrun", "paint", "fbshell", "notes", "timer", "longhouse", "bible", "reader", "pixel", "calendar", "musicplayer", "condemo", "bars")
     pids = [ln.split()[1] for ln in ps.splitlines() if ln.split() and ln.split()[-1].split("/")[-1] in names and len(ln.split()) > 1]
     for pid in pids:                                   # the picker AND the tools it started: a running program cannot be overwritten
         dev.sh("kill %s" % pid, timeout=15)
@@ -411,11 +414,11 @@ def do_uninstall(dev, plat, remove_data, log):
     if plat == "ios7":
         log("Turning off kiosk mode and removing the icon...")
         dev.sh("touch /var/root/kiosk_off; rm -f /var/mobile/fbkiosk_on; launchctl unload /Library/LaunchDaemons/com.local.fbkiosk.plist 2>/dev/null; "
-               "rm -f /Library/LaunchDaemons/com.local.fbkiosk.plist; for n in fblauncher paint tic80 musicplayer fbshell calib condemo notes timer longhouse bible reader pixel; do killall $n >/dev/null 2>&1; done; sleep 2; "
+               "rm -f /Library/LaunchDaemons/com.local.fbkiosk.plist; for n in fblauncher paint tic80 musicplayer fbshell calib condemo notes timer longhouse bible reader pixel calendar; do killall $n >/dev/null 2>&1; done; sleep 2; "
                "/var/root/fbreset 2>/dev/null; rm -rf /Applications/FBTools.app; su mobile -c uicache", timeout=90)
     elif plat == "ios12":
         log("Removing the icon...")
-        dev.sh("for n in fblauncher paint musicplayer fbshell calib notes timer longhouse bible reader pixel; do killall $n >/dev/null 2>&1; done; rm -rf /Applications/FBTools.app; uicache -a", timeout=90)
+        dev.sh("for n in fblauncher paint musicplayer fbshell calib notes timer longhouse bible reader pixel calendar; do killall $n >/dev/null 2>&1; done; rm -rf /Applications/FBTools.app; uicache -a", timeout=90)
         if m.get("tweak", True):
             log("Removing the FB Tools tweak and its loader, then restarting SpringBoard...")
     else:
@@ -520,11 +523,32 @@ def do_app(dev, plat, app_id, action, log):
     log("The picker shows only the apps that are installed. It looks again each time it starts.")
 
 
+def android_set_clock(dev, log, force=False):
+    """A phone that is not on Wi-Fi keeps a wrong clock (the Nexus 4 said 1970). Set it from this Mac when it is off by more than a minute."""
+    b = PLATFORMS["android"]["base"]
+    r = dev.sh("date +%s", timeout=15).stdout.decode(errors="replace").strip()
+    try: phone = int(r.splitlines()[-1])
+    except (ValueError, IndexError): return
+    now = int(time.time())
+    if not force and abs(phone - now) < 60: return
+    if dev.sh("ls %s/fbtime" % b, timeout=15).stdout.decode().find("No such") >= 0: return
+    log("The phone's clock is wrong. Setting it from this Mac...")
+    dev.sh("%s/fbtime %d" % (b, now), timeout=20)
+
+
+def do_set_clock(dev, plat, log):
+    if plat != "android": raise FBToolsError("Setting the clock this way works on Android phones only.")
+    android_set_clock(dev, log, force=True)
+    log("Done.")
+
+
 def do_start(dev, plat, log):
     b = PLATFORMS[plat]["base"]
     m = read_manifest(dev, plat) or {}
     if plat == "android":
+        if hasattr(dev, "ensure_root"): dev.ensure_root()
         android_up_needed = "not found" not in dev.sh("service check window", timeout=15).stdout.decode()
+        android_set_clock(dev, log)
         log("Starting FB Tools on the phone (Android stops while it runs)...")
         dev.sh(dev.rmf(b + "/fbboot_off") + "; " + b + "/fbrun -d 3600 fblauncher", timeout=20)
     elif plat == "ios7":

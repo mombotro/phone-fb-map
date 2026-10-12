@@ -5,6 +5,7 @@
 #include "draw.h"
 #include "kbd.h"
 #include "ui.h"
+#include "caldate.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -24,7 +25,7 @@
 #define NOTE_CAP 60000
 
 typedef struct { char name[64]; time_t mtime; char title[96]; char prev[96]; int open_items, all_items; } Note;
-typedef struct { int note; int off; char text[120]; } Todo;
+typedef struct { int note; int off; char text[120]; int has_due; CDate due; } Todo;
 
 static char dir[256] = DEFAULT_DIR;
 static Note notes[MAXN]; static int nnotes;
@@ -106,12 +107,28 @@ static void scan_todos(void) {
             if (s[0] == '[' && s[1] == ' ' && s[2] == ']' && s[3] == ' ') {
                 Todo *t = &todos[ntodos++]; t->note = i; t->off = (int)(s - b);
                 line_text(t->text, sizeof t->text, s);
+                int at; t->has_due = cd_line_due(t->text, (int)strlen(t->text), &t->due, &at);
+                if (t->has_due) t->text[at] = 0;                                       // the date is shown apart from the text
             }
         }
         free(b);
     }
 }
 
+// Put a date on a to-do line (d == NULL takes it off). The line gets or loses " @YYYY-MM-DD" at its end.
+static void set_todo_date(const Todo *t, const CDate *d) {
+    char p[300]; note_path(p, sizeof p, notes[t->note].name);
+    int len; char *b = read_file(p, &len); if (!b) return;
+    int le = t->off; while (le < len && b[le] != '\n') le++;
+    CDate old; int at;
+    if (cd_line_due(b + t->off, le - t->off, &old, &at)) le = t->off + at;      // drop the old date
+    char *nb = malloc((size_t)len + 16); if (!nb) { free(b); return; }
+    int pos = 0; memcpy(nb, b, (size_t)le); pos = le;
+    if (d) pos += sprintf(nb + pos, " @%04d-%02d-%02d", d->y, d->m, d->d);
+    int tail = t->off; while (tail < len && b[tail] != '\n') tail++;             // the end of the original line
+    memcpy(nb + pos, b + tail, (size_t)(len - tail)); pos += len - tail;
+    write_file(p, nb, pos); free(nb); free(b);
+}
 static void toggle_todo(const Todo *t) {
     char p[300]; note_path(p, sizeof p, notes[t->note].name);
     int len; char *b = read_file(p, &len); if (!b) return;
@@ -142,6 +159,7 @@ int main(int argc, char **argv) {
     UiEdit ed; ui_edit_init(&ed, NOTE_CAP);
     UiScroll list_sc = {0}, todo_sc = {0};
     int view = V_LIST, quit = 0, dirty = 3, confirm_del = 0;
+    DatePick dp; int dp_mode = 0, dp_todo = -1;                          // dp_mode: 0 closed, 1 date for a to-do item, 2 date for the line in the editor
     char cur_name[64] = "";
     double t0 = ui_now(), t_blink = t0, t_save = t0; int blink = 1;
     const int BAR = 64, ROW = 84;
@@ -173,7 +191,21 @@ int main(int argc, char **argv) {
         draw_rect(&s, 0, 0, W, H, 0x10161E);
         draw_rect(&s, 0, 0, W, BAR, 0x26303E);
 
-        if (view == V_LIST) {
+        if (dp_mode) {
+            ui_label(&u, 16, 20, 2, "PICK A DATE", 0xFFFFFF);
+            int r = dp_run(&u, &dp, 0, BAR, W, H - BAR);
+            if (r == 1 || r == 3) {
+                if (dp_mode == 1 && dp_todo >= 0 && dp_todo < ntodos) { set_todo_date(&todos[dp_todo], r == 1 ? &dp.sel : NULL); scan_notes(); scan_todos(); }
+                else if (dp_mode == 2) {                                           // the line under the caret in the editor
+                    int ls, le, at; CDate old; ui_edit_line_bounds(&ed, ed.cur, &ls, &le);
+                    if (cd_line_due(ed.buf + ls, le - ls, &old, &at)) { ui_edit_delete(&ed, ls + at, le - (ls + at)); le = ls + at; }
+                    ed.cur = le;
+                    if (r == 1) { char ins[16]; int l = sprintf(ins, " @%04d-%02d-%02d", dp.sel.y, dp.sel.m, dp.sel.d); ui_edit_insert(&ed, ins, l); }
+                    ed.edited = 1;
+                }
+            }
+            if (r) { dp_mode = 0; dirty = 3; }
+        } else if (view == V_LIST) {
             ui_label(&u, 16, 16, 2, "NOTES", 0xFFFFFF);
             int bw = (W - 140) / 3 - 8;
             if (ui_button(&u, 130, 8, bw, BAR - 16, "+NOTE", 0x2E7D4F)) {
@@ -216,8 +248,16 @@ int main(int argc, char **argv) {
                 char buf[128];
                 draw_rect(&s, 0, y, W, rh - 2, 0x18202A);
                 draw_rect(&s, 16, y + 14, 36, 36, 0x8899AA); draw_rect(&s, 19, y + 17, 30, 30, 0x10161E);
-                ui_fit(buf, sizeof buf, todos[i].text, (W - 80) / 16);
+                ui_fit(buf, sizeof buf, todos[i].text, (W - 80 - 150) / 16);
                 ui_label(&u, 68, y + 8, 2, buf, 0xF0F0F0);
+                {                                                                         // the date, or DATE to pick one
+                    draw_rect(&s, W - 150, y + 10, 140, rh - 22, todos[i].has_due ? 0x2E7D4F : 0x26303E);
+                    char dl[16]; if (todos[i].has_due) snprintf(dl, sizeof dl, "%.3s %d", CD_MON[todos[i].due.m - 1], todos[i].due.d); else snprintf(dl, sizeof dl, "DATE");
+                    ui_label(&u, W - 150 + (140 - (int)strlen(dl) * 16) / 2, y + (rh - 32) / 2, 2, dl, todos[i].has_due ? 0xFFFFFF : 0x99AABB);
+                    if (u.tapped && u.tap_y >= ly && ui_inside(u.tap_x, u.tap_y, W - 158, y, 158, rh)) {
+                        dp_mode = 1; dp_todo = i; dp_init(&dp, todos[i].has_due ? &todos[i].due : NULL); u.tapped = 0; dirty = 3;
+                    }
+                }
                 ui_fit(buf, sizeof buf, notes[todos[i].note].title, (W - 80) / 8);
                 ui_label(&u, 68, y + 46, 1, buf, 0x778899);
                 if (u.tapped && u.tap_y >= ly && ui_inside(u.tap_x, u.tap_y, 0, y, 140, rh)) {
@@ -230,6 +270,10 @@ int main(int argc, char **argv) {
                 save_note(cur_name, &ed); ed.edited = 0; scan_notes(); view = V_LIST; dirty = 3;
             }
             if (ui_button(&u, 136, 8, 120, BAR - 16, "BOX", 0x2E7D4F)) { ui_edit_toggle_box_prefix(&ed); dirty = 3; }
+            if (ui_button(&u, 264, 8, 120, BAR - 16, "DATE", 0x34608F)) {                     // a date for the line under the caret
+                int ls, le, at; CDate cur; ui_edit_line_bounds(&ed, ed.cur, &ls, &le);
+                dp_init(&dp, cd_line_due(ed.buf + ls, le - ls, &cur, &at) ? &cur : NULL); dp_mode = 2; dirty = 3;
+            }
             if (ui_button(&u, W - 128, 8, 120, BAR - 16, confirm_del ? "SURE?" : "DEL", 0x883333)) {
                 if (confirm_del) { ed.len = 0; ed.buf[0] = 0; save_note(cur_name, &ed); ed.edited = 0; scan_notes(); view = V_LIST; confirm_del = 0; }
                 else confirm_del = 1;

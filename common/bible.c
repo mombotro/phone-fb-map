@@ -31,7 +31,9 @@ static char *text; static const char **vtext; static int *vnum; static int nvers
 static Line lines[MAXLINES]; static int nlines, indent;                    // indent: pixels
 static char dir[256] = DEFAULT_DIR;
 
+static void free_bible(void) { free(text); free(vtext); free(vnum); text = NULL; vtext = NULL; vnum = NULL; nverses = 0; nbooks = 0; memset(books, 0, sizeof books); }
 static int load_bible(const char *path) {
+    free_bible();
     FILE *f = fopen(path, "rb"); if (!f) return -1;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     text = malloc(n + 1); if (!text) { fclose(f); return -1; }
@@ -79,15 +81,21 @@ static void layout(int bk, int ch, int maxw) {
     }
 }
 
+// The translations: DIR/asv.txt and DIR/net.txt (whichever exist). The book and chapter stay the same when you switch.
+static const char *TRN[2] = { "asv", "net" };
+static int tr_ok[2], tr = 0;
+static int load_tr(int t) { char p[320]; snprintf(p, sizeof p, "%s/%s.txt", dir, TRN[t]); return load_bible(p); }
+
 static void save_pos(int bk, int ch, int sc) {
     char p[300]; snprintf(p, sizeof p, "%s/pos", dir);
     FILE *f = fopen(p, "w"); if (!f) return;
-    fprintf(f, "%d %d %d\n", bk, ch, sc); fclose(f);
+    fprintf(f, "%d %d %d %d\n", bk, ch, sc, tr); fclose(f);
 }
+static int saved_tr = -1;
 static void load_pos(int *bk, int *ch, int *sc) {
     char p[300]; snprintf(p, sizeof p, "%s/pos", dir);
     FILE *f = fopen(p, "r"); if (!f) return;
-    int a, b, c; if (fscanf(f, "%d %d %d", &a, &b, &c) == 3 && a >= 0 && a < nbooks && b >= 1 && b <= books[a].nch && c >= 1 && c <= 3) { *bk = a; *ch = b; *sc = c; }
+    int a, b, c, t = -1; if (fscanf(f, "%d %d %d %d", &a, &b, &c, &t) >= 3 && a >= 0 && a < nbooks && b >= 1 && b <= books[a].nch && c >= 1 && c <= 3) { *bk = a; *ch = b; *sc = c; saved_tr = t; }
     fclose(f);
 }
 
@@ -97,7 +105,11 @@ int main(int argc, char **argv) {
     double seconds = argc > 1 ? atof(argv[1]) : 86400;
     char path[300]; snprintf(path, sizeof path, "%s/asv.txt", dir);
     if (argc > 2) { snprintf(path, sizeof path, "%s", argv[2]); char *sl = strrchr(path, '/'); if (sl) { snprintf(dir, sizeof dir, "%.*s", (int)(sl - path), path); } }
-    int loaded = load_bible(path) == 0;
+    for (int i = 0; i < 2; i++) { char tp[320]; snprintf(tp, sizeof tp, "%s/%s.txt", dir, TRN[i]); tr_ok[i] = access(tp, R_OK) == 0; }
+    if (!tr_ok[0] && tr_ok[1]) tr = 1;
+    { int sb = 0, sc2 = 1, sf = 2; load_pos(&sb, &sc2, &sf); if (saved_tr >= 0 && saved_tr < 2 && tr_ok[saved_tr]) tr = saved_tr; }
+    int loaded = load_tr(tr) == 0;
+    int ntr = tr_ok[0] + tr_ok[1];
     rdr_use(FONT_DIR);                                             // the reading font chosen in the picker settings, or the chunky one
     PlatInfo pi;
     if (plat_init(&pi)) return 1;
@@ -131,8 +143,12 @@ int main(int argc, char **argv) {
             ui_label(&u, 16, BAR + 72, 1, "Install it from Phone Files > FB Tools > Apps.", 0x8899AA);
             if (ui_button(&u, W - 136, 8, 128, BAR - 16, "EXIT", 0x883333)) quit = 1;
         } else if (view == V_BOOKS) {
-            ui_label(&u, 16, 16, 2, "BIBLE", 0xFFFFFF);
+            { char ttl[32]; snprintf(ttl, sizeof ttl, "BIBLE %c%c%c", TRN[tr][0] - 32, TRN[tr][1] - 32, TRN[tr][2] - 32); ui_label(&u, 16, 16, 2, ttl, 0xFFFFFF); }
             if (ui_button(&u, W - 136, 8, 128, BAR - 16, "EXIT", 0x883333)) quit = 1;
+            if (ntr > 1 && ui_button(&u, W - 280, 8, 136, BAR - 16, tr ? "ASV" : "NET", 0x2E7D4F)) {           // the button names the translation you switch to
+                int nt = 1 - tr; if (load_tr(nt) == 0) tr = nt; else load_tr(tr);
+                if (ch > books[bk].nch) ch = 1; laid = 0; sc_books.pos = 0; save_pos(bk, ch, fs); dirty = 3;
+            }
             int ly = BAR, lh = H - BAR, rows = nbooks + 2;
             ui_scroll(&u, &sc_books, 0, ly, W, lh, rows * ROW);
             for (int r = 0; r < rows; r++) {
@@ -183,7 +199,11 @@ int main(int argc, char **argv) {
             char title[64]; snprintf(title, sizeof title, "%s %d", books[bk].name, ch);
             if (ui_button(&u, 8, 8, 128, BAR - 16, "BOOKS", 0x34608F)) { view = V_BOOKS; save_pos(bk, ch, fs); dirty = 3; }
             if (ui_button(&u, W - 80, 8, 72, BAR - 16, "A", 0x2E7D4F)) { fs = fs % 3 + 1; laid = 0; sc_read.pos = 0; save_pos(bk, ch, fs); dirty = 3; }
-            ui_fit(title, sizeof title, title, (W - 240) / 16);
+            if (ntr > 1 && ui_button(&u, W - 160, 8, 72, BAR - 16, tr ? "ASV" : "NET", 0x2E7D4F)) {              // switch translation: same book and chapter
+                int nt = 1 - tr, keep = sc_read.pos; if (load_tr(nt) == 0) tr = nt; else load_tr(tr);
+                if (ch > books[bk].nch) ch = 1; laid = 0; sc_read.pos = keep; save_pos(bk, ch, fs); dirty = 3;
+            }
+            ui_fit(title, sizeof title, title, (W - (ntr > 1 ? 330 : 240)) / 16);
             ui_label(&u, 148, 16, 2, title, 0xFFFFFF);
             int bw = (W - 24) / 2;
             int prev_ok = ch > 1 || bk > 0, next_ok = ch < books[bk].nch || bk < nbooks - 1;

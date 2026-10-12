@@ -40,6 +40,7 @@ static const Tool TOOLS[] = {
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
+    { "Calendar",  "month view + to-dos", "31",  0x3A8AA5, BASE "/calendar 86400 " BASE "/data/calendar " BASE "/data/notes", K_RUN },
     { "Bible",     "American Standard",   "+",   0x7A5A3A, BASE "/bible 86400 " BASE "/data/bible/asv.txt", K_RUN },
     { "Reader",    "txt + epub books",    "Bk",  0x5A7A3A, BASE "/reader 86400 " BASE "/data/books", K_RUN },
     { "Pixel",     "pixel art editor",    "::",  0xA53A8A, BASE "/pixel 86400 " BASE "/data/pixel", K_RUN },
@@ -51,6 +52,7 @@ static const Tool TOOLS[] = {
     { "Music",     "play your music",     "|||", 0xA58A3A, BASE "/musicplayer " BASE "/music 86400", K_RUN },
     { "Notes",     "notes + to-do lists", "[x]", 0x3A9AA5, BASE "/notes 86400 " BASE "/data/notes", K_RUN },
     { "Timer",     "watch, timer, alarm", "o",   0xA55A3A, BASE "/timer 86400",           K_RUN },
+    { "Calendar",  "month view + to-dos", "31",  0x3A8AA5, BASE "/calendar 86400 " BASE "/data/calendar " BASE "/data/notes", K_RUN },
     { "Bible",     "American Standard",   "+",   0x7A5A3A, BASE "/bible 86400 " BASE "/data/bible/asv.txt", K_RUN },
     { "Reader",    "txt + epub books",    "Bk",  0x5A7A3A, BASE "/reader 86400 " BASE "/data/books", K_RUN },
     { "TIC-80",    "pick a game cart",    "80",  0xA53A4E, BASE "/tic80",                 K_CARTS },
@@ -342,9 +344,6 @@ int main(int argc, char **argv) {
                 // title bar (ink) with the name and the time, like a palmtop; with the theme off it is the old dark header
                 draw_rect(&s, 0, 0, W, 92, 0x26303E);
                 draw_text(&s, GAP + 6, 26, 5, "momPKT", 0xFFFFFF);
-#ifndef __APPLE__
-                draw_text(&s, GAP + 6 + 6 * 40 + 12, 30, 3, "v", 0xFFFFFF);                  // the settings drop-down hangs from the name
-#endif
                 { time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); char clock[8]; strftime(clock, sizeof clock, "%H:%M", &lt);
                   draw_text(&s, W - GAP - 5 * 8 * 3 - 6, 30, 3, clock, 0xFFFFFF); }
                 { int pct, chg;                                                  // the battery, left of the time; nothing if the phone shows none
