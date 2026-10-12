@@ -147,7 +147,7 @@ The shell in Android 2.3 has no `test` or `[`, and it crashes on `trap`. The pro
 | TIC-80 sound | Works | Android 8 players need the appops and audio services, which are in the part of Android that is stopped. A stand-in for both is in the sound helper. |
 | Music | Works | The media server cannot read files in `/data/local/tmp`. The helper gives each song a media label first. |
 | Home-screen icon | Unknown | The first tap needs a Magisk "Grant Superuser" tap. |
-| Boot straight into FB Tools | Unknown | Uses a Magisk `service.d` script. Not checked yet. |
+| Boot straight into FB Tools | Works | A Magisk `service.d` script starts `fbrun` at boot. The picker came up by itself about 30 seconds after Android finished. |
 
 ## Moto Z2 Force (Android 8.0)
 
