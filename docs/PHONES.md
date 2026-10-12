@@ -21,6 +21,7 @@ The last update was on 2026-10-10.
 | Nexus 4 | Android 7.1.2 (LineageOS 14.1) | Root (adb root) | A test pattern, touch, shell, and Paint work. The picker shows a black screen (not solved). |
 | Barnes & Noble Nook HD | Android 7.1.1 (LineageOS 14.1) | Root (su) | The picker and icon work. Boot into FB Tools gives a black screen. |
 | Motorola Moto E5 Play (Sprint) | Android 8.0 | Root (Magisk, after a Motorola bootloader unlock) | The picker, touch, apps, TIC-80 sound, and music work. |
+| Motorola Moto G Play (XT1607, Amazon edition) | Android 7.1.1 | Not rooted | No. Motorola's site says the phone is not eligible for a bootloader unlock, so it cannot be rooted. |
 | Kindle Fire (1st generation) | Android 2.3.4 | Root (su) | The picker, apps, sound, and FB Tools manager work. The screen is rotated in software. |
 | Moto Z2 Force | Android 8.0 | Not rooted (bootloader is unlocked) | No. It needs root first. |
 
