@@ -18,7 +18,7 @@ The last update was on 2026-10-10.
 | iPhone 4 (GSM, iPhone3,2) | iOS 7.1.2 | Pangu jailbreak (untethered) | Most features work. This unit cannot activate now. |
 | iPhone 5s (iPhone6,1) | iOS 12.5.7 | Chimera jailbreak (semi-untethered) | The picker, Paint, Notes, and Timer work, with no run limit when the tweak is installed. This unit is not jailbroken now (see the note below). |
 | LG Intuition (VS950) | Android 4.1.2 | Root (SuperSU) | Most features work, including boot into FB Tools. |
-| Nexus 4 | Android 7.1.2 (LineageOS 14.1) | Root (adb root) | The picker, apps, TIC-80 sound, and music work. Start it from Phone Files (no icon). |
+| Nexus 4 | Android 7.1.2 (LineageOS 14.1) | Root (Magisk 27, patched boot image) | The picker, apps, TIC-80 sound, and music work. The picker starts at boot. |
 | Barnes & Noble Nook HD | Android 7.1.1 (LineageOS 14.1) | Root (su) | The picker and icon work. Boot into FB Tools gives a black screen. |
 | Motorola Moto E5 Play (Sprint) | Android 8.0 | Root (Magisk, after a Motorola bootloader unlock) | The picker, touch, apps, TIC-80 sound, and music work. |
 | Motorola Moto G Play (XT1607, Amazon edition) | Android 7.1.1 | Not rooted | No. Motorola's site says the phone is not eligible for a bootloader unlock, so it cannot be rooted. |
@@ -90,15 +90,22 @@ You must sign programs on the phone with `ldid` and the entitlements in `common/
 
 | Feature | Status | Notes |
 |---|---|---|
-| Drawing to the screen | Works | Needs `adb root`. |
+| Drawing to the screen | Works | Needs root (the display is closed to everything else). |
 | Multitouch | Works | |
 | Text console, keyboard, shell | Works | |
 | App picker and apps | Works | The screen went black when a program that had been drawing started a child process (a shell, a tool, a helper). The picker now makes a helper process before it opens the display, and that helper starts everything. |
 | TIC-80 sound | Works | The sound helper needs stand-ins for the appops and audio services (Android 7 and newer). |
 | Music | Works | The helper also needs a system application context and the main message loop for `MediaPlayer`, and it ignores the harmless subtitle error -1010. |
-| Home-screen icon | No | The phone has no `su`, which the icon uses. Start from Phone Files "Start now". |
-| Boot straight into FB Tools | Unknown | |
+| Home-screen icon | Unknown | With Magisk the phone has `su`, so the icon should work. Not tried. |
+| Boot straight into FB Tools | Works | Only with Magisk. Without it, Android 7's security rules stop everything that starts at boot from using the display or `/data/local/tmp` (the `init.d` script, services in the `shell` context, and a launcher copied into `/sbin` were all tried and refused). Magisk's `service.d` script runs in a context that is allowed. |
 | Phone Files and the FB Tools manager | Works | The manager uses `adb root` when there is no `su`. |
+
+How the Nexus 4 was rooted (the bootloader was already unlocked):
+
+1. Save the boot partition: `adb root`, then `adb shell dd if=/dev/block/mmcblk0p6 > boot_stock.img`. Keep this file, it undoes everything.
+2. Put the files of the Magisk 27 APK (`assets/boot_patch.sh`, `assets/util_functions.sh`, `assets/stub.apk`, and from `lib/armeabi-v7a` the files `libbusybox.so`, `libmagisk32.so`, `libmagiskboot.so`, `libmagiskinit.so`, `libmagiskpolicy.so` without the `lib` and `.so`) in `/data/local/tmp/mg` on the phone, and the boot image as `boot.img`.
+3. Run `KEEPVERITY=true KEEPFORCEENCRYPT=true sh boot_patch.sh /data/local/tmp/mg/boot.img` on the phone, and pull `new-boot.img`.
+4. `adb reboot bootloader`, then `fastboot boot new-boot.img` to try it, and `fastboot flash boot new-boot.img` when it works. Install the Magisk APK. Phone Files writes the boot script `/data/adb/service.d/99fbtools.sh`.
 
 ## Kindle Fire, 1st generation (Android 2.3.4, TI OMAP)
 
