@@ -19,8 +19,21 @@ public class Shim {
         }
     }
 
+    // MediaPlayer (Android 7 and newer) builds a SubtitleController with ActivityThread.currentApplication() in a helper thread, and that is
+    // null in a bare app_process, so the player never prepares. ActivityThread.systemMain() makes the system "application". The caller must
+    // have a Looper on its thread first.
+    public static void context() {
+        if (Build.VERSION.SDK_INT < 24) return;
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            if (at.getMethod("currentApplication").invoke(null) == null) at.getMethod("systemMain").invoke(null);
+        } catch (Throwable t) {
+            System.err.println("shim context: " + t);
+        }
+    }
+
     public static void install() {
-        if (Build.VERSION.SDK_INT < 26) return;                   // older Android does not need it
+        if (Build.VERSION.SDK_INT < 24) return;                   // older Android does not need it (Android 7 needs it too: its players ask appops)
         try {
             Class<?> sm = Class.forName("android.os.ServiceManager");
             Method get = sm.getMethod("getService", String.class);

@@ -31,7 +31,7 @@ public class Helper {
     // Android 8 and newer: the media server may not read files that belong to the shell (the label of /data/local/tmp), so give the
     // file a media label first. Needs root, which this helper has. Failure is harmless.
     static void relabel(String path) {
-        if (Build.VERSION.SDK_INT < 26) return;
+        if (Build.VERSION.SDK_INT < 24) return;
         try { Runtime.getRuntime().exec(new String[] { "chcon", "u:object_r:media_rw_data_file:s0", path }).waitFor(); } catch (Exception e) { }
     }
 
@@ -51,7 +51,10 @@ public class Helper {
                 public void onCompletion(MediaPlayer m) { started = false; say("state ended"); }
             });
             mp.setOnErrorListener(new MediaPlayer.OnErrorListener() {
-                public boolean onError(MediaPlayer m, int what, int extra) { started = false; say("state error " + what + "/" + extra); return true; }
+                public boolean onError(MediaPlayer m, int what, int extra) {
+                    if (extra == -1010) return true;               // "unsupported": the subtitle track of the file (Android 7 and newer). The sound keeps playing.
+                    started = false; say("state error " + what + "/" + extra); return true;
+                }
             });
             mp.prepareAsync();
         } catch (Exception e) {
@@ -77,8 +80,9 @@ public class Helper {
     }
 
     public static void main(String[] args) throws Exception {
+        Looper.prepareMainLooper();                          // MediaPlayer callbacks arrive on this thread, and Android 7 asks for the main looper
         Shim.install();
-        Looper.prepare();                                    // MediaPlayer callbacks arrive on this thread
+        Shim.context();
         h = new Handler(Looper.myLooper());
         say("ready");
         new Thread(new Runnable() {

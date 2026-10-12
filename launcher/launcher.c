@@ -7,6 +7,7 @@
 //
 // Kiosk mode (FB_KIOSK set): the Exit tile is not shown, so there is no way out to the phone's home screen.
 // Use launcher/kiosk.sh from the Mac to turn kiosk mode off.
+#define PLAT_SPAWNER 1                          // Android: start children through a helper made before the display opens (see plat_android.h)
 #include "../common/plat.h"
 #include "../common/draw.h"
 #include <dirent.h>
@@ -83,6 +84,13 @@ static void run_tool(const char *cmdline) {
     for (char *p = strtok(buf, " "); p && n < 15; p = strtok(NULL, " ")) argv[n++] = p;
     argv[n] = NULL;
     if (n == 0 || access(argv[0], X_OK) != 0) return;
+#ifndef __APPLE__
+    if (plat_have_spawner()) {                                       // the helper starts the tool: this program never forks
+        char sh[600]; snprintf(sh, sizeof sh, "export FB_PARENT=1; exec %s", cmdline);
+        int id = plat_spawn('S', sh);
+        if (id > 0) { while (plat_spawn_state(id) < 0) { plat_keepalive(); usleep(100000); } return; }
+    }
+#endif
     pid_t pid = fork();
     if (pid < 0) return;
     if (pid == 0) { setenv("FB_PARENT", "1", 1); execv(argv[0], argv); _exit(127); }
@@ -290,7 +298,12 @@ int main(int argc, char **argv) {
                 draw_text(&s, GAP + 6, H / 2 - 16, 3, "Shutting down...", 0xFFFFFF);
                 plat_flip();
                 sync();
-                for (int q = 0; q < N_ALL; q++) if (TOOLS[q].kind == K_SHUTDOWN) { system(TOOLS[q].cmd); break; }       // /sbin/halt on iPhone, "reboot -p" on Android
+                for (int q = 0; q < N_ALL; q++) if (TOOLS[q].kind == K_SHUTDOWN) {
+#ifndef __APPLE__
+                    if (plat_have_spawner()) plat_spawn('S', TOOLS[q].cmd); else
+#endif
+                    (void)!system(TOOLS[q].cmd);
+                    break; }       // /sbin/halt on iPhone, "reboot -p" on Android
                 sleep(60);
             } else if (tx >= bx && tx < bx + bw && ty >= 600 && ty < 780) state = S_MAIN;     // CANCEL
             dirty = 3;

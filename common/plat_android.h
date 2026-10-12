@@ -30,6 +30,9 @@ __attribute__((used, aligned(32))) __thread char plat__tls_pad[32];
 static struct fb_var_screeninfo plat__v;
 static struct fb_fix_screeninfo plat__f;
 static uint8_t *plat__base;
+static int plat_have_spawner(void);                       // the spawner (see below): children started through a helper
+static int plat_spawn(char kind, const char *arg);
+static int plat_spawn_state(int id);
 static int plat__fd, plat__pages, plat__page;
 static double plat__last;
 static char plat__bl_path[96];
@@ -242,6 +245,7 @@ static void plat_wifi_set(int on) {
         snprintf(cmd, sizeof cmd, "ifconfig %s down", nm);
     } else if (gw[0]) snprintf(cmd, sizeof cmd, "ifconfig %s up; route add default gw %s dev %s", nm, gw, nm);
     else snprintf(cmd, sizeof cmd, "ifconfig %s up", nm);
+    if (plat_have_spawner()) { int id = plat_spawn('S', cmd); for (int i = 0; id > 0 && i < 60 && plat_spawn_state(id) < 0; i++) usleep(100000); return; }
     (void)!system(cmd);
 }
 
@@ -350,8 +354,84 @@ static void plat__time_sync_now(void) {
     static const char *servers[] = { "216.239.35.0", "129.6.15.28", "162.159.200.1", "132.163.97.1", NULL };
     for (int i = 0; servers[i]; i++) if (plat__ntp_once(servers[i]) == 0) { FILE *f = fopen(PLAT_TIME_OK, "w"); if (f) { fputs("ok\n", f); fclose(f); } return; }
 }
+// ---- the spawner. On the Nexus 4 the display goes black if a program that has been showing pictures starts a child process (a
+// colour-bar test stayed on screen with the children started by a helper that existed BEFORE the display was opened, and went black
+// with the same children started by the program itself). So a program that must start children defines PLAT_SPAWNER before including
+// plat.h. plat_init then makes a small helper process first. The program sends it one-line requests, and it starts the commands.
+//   plat_spawn(kind, text)   kind 'S': run text with sh -c. 'T': set the clock from a time server. 'Z': write the time zone offset
+//   plat_spawn_state(id)     -1 while it runs, else its exit status
+#define PLAT_TZ_FILE "/data/local/tmp/.tzoff"
+#ifdef PLAT_SPAWNER
+static int plat__sp_cmd = -1, plat__sp_rep = -1, plat__sp_next = 1;
+static void plat__spawner_start(void) {
+    int c[2], r[2];
+    if (plat__sp_cmd >= 0 || pipe(c) || pipe(r)) return;
+    pid_t pid = fork();
+    if (pid < 0) return;
+    if (pid == 0) {                                                  // the helper: it exists before the display, so its children never touch it
+        close(c[1]); close(r[0]); signal(SIGCHLD, SIG_IGN);
+        char line[640]; int n = 0;
+        for (;;) {
+            char ch; ssize_t k = read(c[0], &ch, 1);
+            if (k <= 0) _exit(0);                                    // the program ended
+            if (ch != '\n') { if (n < (int)sizeof line - 1) line[n++] = ch; continue; }
+            line[n] = 0; n = 0;
+            char *sp = strchr(line, ' '); if (!sp || !sp[1]) continue;
+            int id = atoi(line); char kind = sp[1]; const char *arg = sp[2] == ' ' ? sp + 3 : "";
+            if (fork() == 0) {                                       // a runner: start the command, wait for it, report
+                close(c[0]); signal(SIGCHLD, SIG_DFL);
+                pid_t w = fork(); int st = 0;
+                if (w == 0) {
+                    close(r[1]);
+                    if (kind == 'S') { execl("/system/bin/sh", "sh", "-c", arg, (char *)NULL); _exit(127); }
+                    if (kind == 'T') { plat__time_sync_now(); _exit(0); }
+                    if (kind == 'Z') {
+                        FILE *f = popen("date +%z", "r"); char b[16] = "";
+                        if (f) { if (!fgets(b, sizeof b, f)) b[0] = 0; pclose(f); }
+                        FILE *o = fopen(PLAT_TZ_FILE, "w"); if (o) { fputs(b, o); fclose(o); }
+                    }
+                    _exit(0);
+                }
+                waitpid(w, &st, 0);
+                char rep[48]; int l = snprintf(rep, sizeof rep, "%d %d\n", id, WIFEXITED(st) ? WEXITSTATUS(st) : 128);
+                (void)!write(r[1], rep, (size_t)l); _exit(0);
+            }
+        }
+    }
+    close(c[0]); close(r[1]); plat__sp_cmd = c[1]; plat__sp_rep = r[0];
+    fcntl(r[0], F_SETFL, fcntl(r[0], F_GETFL) | O_NONBLOCK);
+}
+static int plat_spawn(char kind, const char *arg) {
+    if (plat__sp_cmd < 0) return -1;
+    char line[660]; int id = plat__sp_next++;
+    int l = snprintf(line, sizeof line, "%d %c %s\n", id, kind, arg ? arg : "");
+    if (l <= 0 || write(plat__sp_cmd, line, (size_t)l) != l) return -1;
+    return id;
+}
+static int plat_spawn_state(int id) {
+    static char acc[512]; static int na; static struct { int id, st; } done[64]; static int nd;
+    if (plat__sp_rep >= 0) {
+        ssize_t k = read(plat__sp_rep, acc + na, sizeof acc - 1 - (size_t)na);
+        if (k > 0) na += (int)k;
+        acc[na] = 0; char *nl;
+        while ((nl = strchr(acc, '\n'))) {
+            *nl = 0; int i = 0, st = 0; if (sscanf(acc, "%d %d", &i, &st) == 2) { if (nd == 64) { memmove(done, done + 1, 63 * sizeof done[0]); nd--; } done[nd].id = i; done[nd].st = st; nd++; }
+            na -= (int)(nl + 1 - acc); memmove(acc, nl + 1, (size_t)na + 1);
+        }
+    }
+    for (int i = 0; i < nd; i++) if (done[i].id == id) return done[i].st;
+    return -1;
+}
+static int plat_have_spawner(void) { return plat__sp_cmd >= 0; }
+#else
+static int plat_have_spawner(void) { return 0; }
+static int plat_spawn(char kind, const char *arg) { (void)kind; (void)arg; return -1; }
+static int plat_spawn_state(int id) { (void)id; return 0; }
+#endif
+
 // Run the sync in a separate process that is not our child, so the caller's waitpid() calls are not disturbed.
 static void plat_time_sync_async(void) {
+    if (plat_have_spawner()) { plat_spawn('T', ""); return; }
     pid_t p = fork();
     if (p < 0) return;
     if (p == 0) { if (fork() == 0) { setsid(); plat__time_sync_now(); } _exit(0); }
@@ -371,7 +451,21 @@ static void plat__timezone(void) {
     char tz[24]; snprintf(tz, sizeof tz, "UTC%c%02d:%02d", b[0] == '+' ? '-' : '+', h, m);   // POSIX sign is reversed
     setenv("TZ", tz, 1); tzset();
 }
-static void plat_timezone_refresh(void) { unsetenv("TZ"); plat__timezone(); }       // the offset changes with the date (summer time)
+static void plat_timezone_refresh(void) {                        // the offset changes with the date (summer time)
+    if (plat_have_spawner()) {                                       // ask the helper now, and use the answer it wrote the last time
+        FILE *f = fopen(PLAT_TZ_FILE, "r");
+        if (f) {
+            char b[16] = ""; if (!fgets(b, sizeof b, f)) b[0] = 0; fclose(f);
+            if ((b[0] == '+' || b[0] == '-') && strlen(b) >= 5) {
+                int h = (b[1] - '0') * 10 + (b[2] - '0'), m = (b[3] - '0') * 10 + (b[4] - '0');
+                char tz[24]; snprintf(tz, sizeof tz, "UTC%c%02d:%02d", b[0] == '+' ? '-' : '+', h, m);
+                setenv("TZ", tz, 1); tzset();
+            }
+        }
+        plat_spawn('Z', ""); return;
+    }
+    unsetenv("TZ"); plat__timezone();
+}
 static int plat__theme_setting(void) {                      // palm (the default) or dark
     const char *e = getenv("FB_THEME"); char b[16] = "";
     if (!e) { FILE *f = fopen("/data/local/tmp/theme", "r"); if (f) { if (fscanf(f, "%15s", b) == 1) e = b; fclose(f); } }
@@ -379,6 +473,10 @@ static int plat__theme_setting(void) {                      // palm (the default
 }
 
 PLAT_FN int plat_init(PlatInfo *pi) {
+#ifdef PLAT_SPAWNER
+    plat__spawner_start();                                      // before anything touches the display
+#endif
+    plat__timezone();                                          // it starts a shell, so it must come before the display is opened
     plat__fd = open("/dev/graphics/fb0", O_RDWR);
     if (plat__fd < 0) plat__fd = open("/dev/fb0", O_RDWR);
     if (plat__fd < 0) { perror("open fb0"); return -1; }
@@ -424,7 +522,6 @@ PLAT_FN int plat_init(PlatInfo *pi) {
         if (plat__sbuf) fprintf(stderr, "framebuffer: %d pages, drawing in memory and copying at flip\n", plat__pages);
     }
     pi->theme = plat__theme_setting();
-    plat__timezone();
     plat__bl_find();                                           // after wake_panel: the level to return to when the screen comes back
     if (!getenv("FB_PARENT")) unlink(PLAT_OFF_FLAG);           // a program started by the launcher keeps the state; a fresh start begins with the screen on
     plat__buttons_off(1);
