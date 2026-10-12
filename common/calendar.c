@@ -1,7 +1,7 @@
 // calendar.c - a month calendar for the iOS and Android framebuffers.
 // usage: calendar [seconds] [calendar-dir] [notes-dir]      (defaults: 86400, DATA/calendar, DATA/notes)
 // Tap a day to see it. A day shows your own events (DIR/events.txt, one line "YYYY-MM-DD text" each) and the to-do items of your notes
-// that end with " @YYYY-MM-DD" (set with the DATE button in Notes). Tap a to-do tick box to tick it off in its note.
+// that end with " @YYYY-MM-DD" (set with the DATE button in Notes). Any note line with a date shows; tap the tick box of a to-do line to tick it off in its note.
 #include "plat.h"
 #include "draw.h"
 #include "kbd.h"
@@ -59,12 +59,13 @@ static void load_all(void) {
         char *b = malloc((size_t)n + 1); if (!b) { fclose(nf); continue; }
         n = (long)fread(b, 1, (size_t)n, nf); b[n] = 0; fclose(nf);
         for (char *s = b; s && ntd < MAXEV; s = strchr(s, '\n') ? strchr(s, '\n') + 1 : NULL) {
-            if (s[0] != '[' || (s[1] != ' ' && s[1] != 'x') || s[2] != ']' || s[3] != ' ') continue;
+            int box = s[0] == '[' && (s[1] == ' ' || s[1] == 'x') && s[2] == ']' && s[3] == ' ';     // a to-do line, else a plain note line
             char *le = strchr(s, '\n'); int len = le ? (int)(le - s) : (int)strlen(s);
             CDate d; int at; if (!cd_line_due(s, len, &d, &at)) continue;
-            Todo *t = &td[ntd++]; t->d = d; t->off = (int)(s - b); t->done = s[1] == 'x';
-            int tl = at - 4; if (tl < 0) tl = 0; if (tl > (int)sizeof t->text - 1) tl = (int)sizeof t->text - 1;
-            memcpy(t->text, s + 4, (size_t)tl); t->text[tl] = 0;
+            Todo *t = &td[ntd++]; t->d = d; t->off = box ? (int)(s - b) : -1; t->done = box && s[1] == 'x';
+            int skip = box ? 4 : 0, tl = at - skip; if (tl < 0) tl = 0; if (tl > (int)sizeof t->text - 1) tl = (int)sizeof t->text - 1;
+            if (!tl) { ntd--; continue; }
+            memcpy(t->text, s + skip, (size_t)tl); t->text[tl] = 0;
             snprintf(t->note, sizeof t->note, "%s", e->d_name);
         }
         free(b);
@@ -74,6 +75,7 @@ static void load_all(void) {
 static int count_day(CDate d) { int c = 0; for (int i = 0; i < nev; i++) if (cd_same(ev[i].d, d)) c++; for (int i = 0; i < ntd; i++) if (cd_same(td[i].d, d)) c++; return c; }
 
 static void toggle_todo(const Todo *t) {                                         // tick or untick the line in its note
+    if (t->off < 0) return;                                                      // a plain line has no tick box
     char p[300]; snprintf(p, sizeof p, "%s/%s", notesdir, t->note);
     FILE *f = fopen(p, "rb"); if (!f) return;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -197,10 +199,11 @@ int main(int argc, char **argv) {
                 int y = ly + r * ROW - day_sc.pos; r++;
                 if (y + ROW <= ly || y >= ly + lh) continue;
                 char b[110]; draw_rect(&s, 0, y, W, ROW - 2, 0x18202A);
-                draw_rect(&s, 16, y + 18, 36, 36, 0x8899AA); draw_rect(&s, 19, y + 21, 30, 30, td[i].done ? 0x55CC77 : 0x10161E);
-                ui_fit(b, sizeof b, td[i].text, (W - 100) / 16); ui_label(&u, 68, y + 8, 2, b, td[i].done ? 0x778899 : 0xF0F0F0);
+                if (td[i].off < 0) draw_rect(&s, 16, y + 22, 24, 24, 0x4FA3D9);                   // a plain note line: a marker, no tick box
+                else { draw_rect(&s, 16, y + 18, 36, 36, 0x8899AA); draw_rect(&s, 19, y + 21, 30, 30, td[i].done ? 0x55CC77 : 0x10161E); }
+                ui_fit(b, sizeof b, td[i].text, (W - 100) / 16); ui_label(&u, td[i].off < 0 ? 56 : 68, y + 8, 2, b, td[i].done ? 0x778899 : 0xF0F0F0);
                 char nb[70]; snprintf(nb, sizeof nb, "note: %s", td[i].note); ui_fit(b, sizeof b, nb, (W - 100) / 8); ui_label(&u, 68, y + 48, 1, b, 0x778899);
-                if (u.tapped && u.tap_y >= ly && ui_inside(u.tap_x, u.tap_y, 0, y, 140, ROW)) { toggle_todo(&td[i]); load_all(); u.tapped = 0; dirty = 3; break; }
+                if (td[i].off >= 0 && u.tapped && u.tap_y >= ly && ui_inside(u.tap_x, u.tap_y, 0, y, 140, ROW)) { toggle_todo(&td[i]); load_all(); u.tapped = 0; dirty = 3; break; }
             }
             if (!rows) ui_label(&u, 16, ly + 24, 2, "Nothing on this day.", 0x8899AA);
             if (ui_button(&u, 8, H - 72, W - 16, 64, "+ EVENT", 0x2E7D4F)) { ui_edit_set(&ed, ""); view = V_ADD; }
