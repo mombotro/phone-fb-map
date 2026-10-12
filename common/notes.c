@@ -25,7 +25,7 @@
 #define NOTE_CAP 60000
 
 typedef struct { char name[64]; time_t mtime; char title[96]; char prev[96]; int open_items, all_items; } Note;
-typedef struct { int note; int off; char text[120]; int has_due; CDate due; } Todo;
+typedef struct { int note; int off; char text[120]; int has_due; CDate due; int done; } Todo;
 
 static char dir[256] = DEFAULT_DIR;
 static Note notes[MAXN]; static int nnotes;
@@ -100,12 +100,12 @@ static void scan_notes(void) {
 static void scan_todos(void) {
     ntodos = 0;
     for (int i = 0; i < nnotes && ntodos < MAXT; i++) {
-        if (!notes[i].open_items) continue;
+        if (!notes[i].all_items) continue;
         char p[300]; note_path(p, sizeof p, notes[i].name);
         char *b = read_file(p, NULL); if (!b) continue;
         for (char *s = b; s && ntodos < MAXT; s = strchr(s, '\n') ? strchr(s, '\n') + 1 : NULL) {
-            if (s[0] == '[' && s[1] == ' ' && s[2] == ']' && s[3] == ' ') {
-                Todo *t = &todos[ntodos++]; t->note = i; t->off = (int)(s - b);
+            if (s[0] == '[' && (s[1] == ' ' || s[1] == 'x') && s[2] == ']' && s[3] == ' ') {
+                Todo *t = &todos[ntodos++]; t->note = i; t->off = (int)(s - b); t->done = s[1] == 'x';
                 line_text(t->text, sizeof t->text, s);
                 int at; t->has_due = cd_line_due(t->text, (int)strlen(t->text), &t->due, &at);
                 if (t->has_due) t->text[at] = 0;                                       // the date is shown apart from the text
@@ -113,6 +113,10 @@ static void scan_todos(void) {
         }
         free(b);
     }
+    static Todo tmp[MAXT]; int n = 0;                                              // ticked items go below the open ones
+    for (int i = 0; i < ntodos; i++) if (!todos[i].done) tmp[n++] = todos[i];
+    for (int i = 0; i < ntodos; i++) if (todos[i].done) tmp[n++] = todos[i];
+    memcpy(todos, tmp, (size_t)ntodos * sizeof todos[0]);
 }
 
 // Put a date on a to-do line (d == NULL takes it off). The line gets or loses " @YYYY-MM-DD" at its end.
@@ -132,8 +136,33 @@ static void set_todo_date(const Todo *t, const CDate *d) {
 static void toggle_todo(const Todo *t) {
     char p[300]; note_path(p, sizeof p, notes[t->note].name);
     int len; char *b = read_file(p, &len); if (!b) return;
-    if (t->off + 3 < len && b[t->off + 1] == ' ') { b[t->off + 1] = 'x'; write_file(p, b, len); }
+    if (t->off + 3 < len && (b[t->off + 1] == ' ' || b[t->off + 1] == 'x')) { b[t->off + 1] = b[t->off + 1] == ' ' ? 'x' : ' '; write_file(p, b, len); }
     free(b);
+}
+
+// Remove every ticked line ("[x] ...") from all notes. A note that ends up empty vanishes. Returns how many lines went.
+static int remove_done(void) {
+    int removed = 0;
+    for (int i = 0; i < nnotes; i++) {
+        char p[300]; note_path(p, sizeof p, notes[i].name);
+        int len; char *b = read_file(p, &len); if (!b) continue;
+        char *nb = malloc((size_t)len + 1); if (!nb) { free(b); continue; }
+        int pos = 0, n = 0;
+        for (int a = 0; a < len; ) {
+            int e = a; while (e < len && b[e] != '\n') e++;
+            int next = e < len ? e + 1 : e;
+            if (e - a >= 4 && b[a] == '[' && (b[a + 1] == 'x' || b[a + 1] == 'X') && b[a + 2] == ']' && b[a + 3] == ' ') n++;
+            else { memcpy(nb + pos, b + a, (size_t)(next - a)); pos += next - a; }
+            a = next;
+        }
+        if (n) {
+            removed += n;
+            int blank = 1; for (int k = 0; k < pos; k++) if (nb[k] != '\n' && nb[k] != ' ' && nb[k] != '\r') { blank = 0; break; }
+            if (blank) unlink(p); else write_file(p, nb, pos);
+        }
+        free(nb); free(b);
+    }
+    return removed;
 }
 
 static int save_note(const char *name, const UiEdit *e) {
@@ -143,6 +172,7 @@ static int save_note(const char *name, const UiEdit *e) {
 }
 
 enum { V_LIST, V_EDIT, V_TODO };
+static int clear_ask;                       // CLEAR DONE was tapped once: the next tap does it
 
 int main(int argc, char **argv) {
     double seconds = argc > 1 ? atof(argv[1]) : 86400;
@@ -216,7 +246,7 @@ int main(int argc, char **argv) {
                 snprintf(cur_name, sizeof cur_name, "n%ld.txt", (long)time(NULL));
                 ui_edit_set(&ed, "Checklist\n[ ] "); view = V_EDIT; t_save = t; confirm_del = 0;
             }
-            if (ui_button(&u, 130 + 2 * (bw + 8), 8, bw, BAR - 16, "TODO", 0x34608F)) { scan_todos(); todo_sc.pos = 0; view = V_TODO; }
+            if (ui_button(&u, 130 + 2 * (bw + 8), 8, bw, BAR - 16, "TODO", 0x34608F)) { scan_todos(); todo_sc.pos = 0; clear_ask = 0; view = V_TODO; }
             int ly = BAR, lh = H - BAR - 56;
             ui_scroll(&u, &list_sc, 0, ly, W, lh, nnotes * ROW);
             for (int i = 0; i < nnotes; i++) {
@@ -239,7 +269,10 @@ int main(int argc, char **argv) {
             if (ui_button(&u, 8, H - 52, W - 16, 44, "EXIT", 0x883333)) quit = 1;
         } else if (view == V_TODO) {
             ui_label(&u, 16, 16, 2, "TO-DO", 0xFFFFFF);
-            if (ui_button(&u, W - 140, 8, 128, BAR - 16, "BACK", 0x34608F)) { scan_notes(); view = V_LIST; }
+            if (ui_button(&u, W - 140, 8, 128, BAR - 16, "BACK", 0x34608F)) { scan_notes(); view = V_LIST; clear_ask = 0; }
+            if (ui_button(&u, W - 360, 8, 212, BAR - 16, clear_ask ? "SURE?" : "CLEAR DONE", 0x883333)) {          // delete the ticked lines
+                if (clear_ask) { remove_done(); scan_notes(); scan_todos(); clear_ask = 0; dirty = 3; } else clear_ask = 1;
+            }
             int ly = BAR, lh = H - BAR, rh = 72;
             ui_scroll(&u, &todo_sc, 0, ly, W, lh, ntodos * rh);
             for (int i = 0; i < ntodos; i++) {
@@ -247,9 +280,10 @@ int main(int argc, char **argv) {
                 if (y + rh <= ly || y >= ly + lh) continue;
                 char buf[128];
                 draw_rect(&s, 0, y, W, rh - 2, 0x18202A);
-                draw_rect(&s, 16, y + 14, 36, 36, 0x8899AA); draw_rect(&s, 19, y + 17, 30, 30, 0x10161E);
+                draw_rect(&s, 16, y + 14, 36, 36, 0x8899AA); draw_rect(&s, 19, y + 17, 30, 30, todos[i].done ? 0x55CC77 : 0x10161E);
                 ui_fit(buf, sizeof buf, todos[i].text, (W - 80 - 150) / 16);
-                ui_label(&u, 68, y + 8, 2, buf, 0xF0F0F0);
+                ui_label(&u, 68, y + 8, 2, buf, todos[i].done ? 0x778899 : 0xF0F0F0);
+                if (todos[i].done) draw_rect(&s, 68, y + 16, (int)strlen(buf) * 16, 2, 0x99AABB);          // struck out until CLEAR DONE
                 {                                                                         // the date, or DATE to pick one
                     draw_rect(&s, W - 150, y + 10, 140, rh - 22, todos[i].has_due ? 0x2E7D4F : 0x26303E);
                     char dl[16]; if (todos[i].has_due) snprintf(dl, sizeof dl, "%.3s %d", CD_MON[todos[i].due.m - 1], todos[i].due.d); else snprintf(dl, sizeof dl, "DATE");
