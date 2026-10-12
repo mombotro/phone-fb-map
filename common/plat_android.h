@@ -61,13 +61,13 @@ static void plat__wake_panel(void) {
                 strncpy(plat__bl_path, paths[i], sizeof plat__bl_path - 1);
                 plat__bl_old = old;
                 fprintf(stderr, "backlight was %d, set to 128 (%s)\n", old, paths[i]);
-                // The Nexus 4 stays black when it starts with the panel timed out: the first unblank is not enough, a second
-                // blank/unblank after the light is up (what a second start does) brings the picture.
-                usleep(300000);
-                ioctl(plat__fd, FBIOBLANK, FB_BLANK_POWERDOWN);
-                usleep(300000);
-                ioctl(plat__fd, FBIOBLANK, FB_BLANK_UNBLANK);
             }
+        } else if (old >= 0) {
+            // After Android stops, the backlight can be dark while its setting still says the old level (the Moto E5 Play at boot, after the
+            // lock screen: black until the power button was pressed twice). Writing the level again turns it on, so off and on once.
+            lseek(fd, 0, SEEK_SET); (void)!write(fd, "0", 1); usleep(80000);
+            char lv[16]; int ll = snprintf(lv, sizeof lv, "%d", old);
+            lseek(fd, 0, SEEK_SET); (void)!write(fd, lv, (size_t)ll);
         }
         close(fd);
         return;
@@ -135,6 +135,19 @@ static void plat__buttons_restore(void) {
 }
 static void plat__screen_set(int off);
 
+
+// Show the picture that is on screen once more, as a new frame. Panning to the same page again does nothing on some panels (after the
+// panel came on again it stays black until the next real flip, a tap in a menu). So the picture is copied into the next page and that
+// page is shown.
+static void plat__repaint(void) {
+    if (!plat__pages || !plat__base) return;
+    size_t psize = (size_t)plat__v.yres * plat__f.line_length;
+    int shown = (plat__page + plat__pages - 1) % plat__pages;
+    if (plat__pages > 1) memcpy(plat__base + (size_t)plat__page * psize, plat__base + (size_t)shown * psize, psize);
+    struct fb_var_screeninfo pv = plat__v; pv.yoffset = (unsigned)(plat__page * (int)plat__v.yres);
+    ioctl(plat__fd, FBIOPAN_DISPLAY, &pv);
+    plat__page = (plat__page + 1) % plat__pages;
+}
 // Called from plat_touch_poll in the program that shows something. A press of the power key toggles the screen.
 static void plat__sync_flag(void) {
     int f = access(PLAT_OFF_FLAG, F_OK) == 0;
@@ -168,8 +181,7 @@ static void plat__screen_set(int off) {
         chmod(PLAT_OFF_FLAG, 0666);
     } else {
         ioctl(plat__fd, FBIOBLANK, FB_BLANK_UNBLANK);
-        struct fb_var_screeninfo pv = plat__v; pv.yoffset = (unsigned)(((plat__page + plat__pages - 1) % plat__pages) * (int)plat__v.yres);
-        ioctl(plat__fd, FBIOPAN_DISPLAY, &pv);                              // show the last picture again
+        plat__repaint();                                                    // show the last picture again, as a new frame
         plat__bl_set(plat__bl_on);
         plat__buttons_off(1);
         unlink(PLAT_OFF_FLAG);
