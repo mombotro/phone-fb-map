@@ -16,7 +16,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PAYLOAD = os.path.join(HERE, "payload")
 MANIFEST = ".fbtools.json"
 APK_PACKAGE = "com.fbtools.launcher"
-ANDROID_HOOK = "/system/etc/install-recovery-2.sh"
+ANDROID_HOOK = "/system/etc/install-recovery-2.sh"            # run at boot by SuperSU roms
+ANDROID_INITD = "/system/etc/init.d/99fbtools"                  # run at boot by LineageOS 14 (the sysinit service)
+ANDROID_MAGISK_HOOK = "/data/adb/service.d/99fbtools.sh"        # run at boot by Magisk (the system is not changed)
 ANDROID_HOOK_TEXT = "#!/system/bin/sh\n# FB Tools: start the app picker at boot (fbrun detaches itself)\n/data/local/tmp/fbrun -d -k -b 31536000 fblauncher\n"
 
 APPS = [
@@ -246,30 +248,55 @@ def foreign_loader(dev, plat):
 
 # ---------------------------------------------------------------- start modes
 
+def android_fix_su(dev, log):
+    """On a LineageOS 14 phone whose su file is setuid, apps cannot use su ("must not be a setuid binary"), so the home-screen icon does
+    nothing. The su of that ROM is meant to be a plain file (a daemon does the work), so remove the setuid bit."""
+    r = dev.sh("ls -l /system/xbin/su; getprop persist.sys.root_access", timeout=20).stdout.decode(errors="replace").splitlines()
+    if len(r) < 2 or not r[1].strip() or "s" not in r[0].split()[0][:4]: return
+    log("The su program is marked setuid, so apps cannot use it. Removing that mark (the icon needs it)...")
+    dev.sh("mount -o remount,rw /system; chmod 755 /system/xbin/su; mount -o remount,ro /system", timeout=60)
+
+
+def android_allow_icon_su(dev, log):
+    """LineageOS 14: su reads the root-access setting from a file, which can be missing even when the property shows 3 (then apps are
+    refused: "Apps root access is disabled"). Write the file by setting the property again, and allow the icon through app-ops."""
+    r = dev.sh("getprop persist.sys.root_access; ls /data/property/persist.sys.root_access 2>&1", timeout=20).stdout.decode(errors="replace").splitlines()
+    if r and r[0].strip() and (len(r) < 2 or "No such file" in r[1]):
+        log("Saving the root-access setting so apps may use su...")
+        dev.sh("setprop persist.sys.root_access %s" % r[0].strip(), timeout=20)
+    if r and r[0].strip(): dev.sh("appops set com.fbtools.launcher SU allow", timeout=20)
+
+
 def apply_mode(dev, plat, mode, log):
     if mode not in PLATFORMS[plat]["modes"]:
         raise FBToolsError("This phone cannot use start mode '%s'." % mode)
     b = PLATFORMS[plat]["base"]
     if plat == "android":
         android_up(dev, log)
-        hook = "No such file" not in dev.sh("ls %s" % ANDROID_HOOK, timeout=15).stdout.decode()
+        if mode in ("home", "boot"): android_fix_su(dev, log)
+        hook = "No such file" not in dev.sh("ls %s" % ANDROID_HOOK, timeout=15).stdout.decode() or "No such file" not in dev.sh("ls %s" % ANDROID_INITD, timeout=15).stdout.decode()
         if mode == "boot":
             log("Setting FB Tools to start at boot (no Restart in the menu), and keeping the icon as a backup...")
             dev.put_text("/data/local/tmp/fbboot_hook.sh", ANDROID_HOOK_TEXT, 0o755)
-            dev.sh("%s; mount -o remount,rw /system; cat /data/local/tmp/fbboot_hook.sh > %s; chmod 755 %s; mount -o remount,ro /system"
-                   % (dev.rmf(b + "/fbboot_off"), ANDROID_HOOK, ANDROID_HOOK), timeout=60)
-            if dev.get_text(ANDROID_HOOK) is None: raise FBToolsError("could not write the boot hook in /system")
+            dev.sh("%s; mount -o remount,rw /system; cat /data/local/tmp/fbboot_hook.sh > %s; chmod 755 %s; "
+                   "if cd /system/etc/init.d; then cat /data/local/tmp/fbboot_hook.sh > %s; chmod 755 %s; fi; mount -o remount,ro /system"
+                   % (dev.rmf(b + "/fbboot_off"), ANDROID_HOOK, ANDROID_HOOK, ANDROID_INITD, ANDROID_INITD), timeout=60)
+            dev.sh("if cd /data/adb/service.d; then cat /data/local/tmp/fbboot_hook.sh > %s; chmod 755 %s; fi" % (ANDROID_MAGISK_HOOK, ANDROID_MAGISK_HOOK), timeout=30)
+            if not any(dev.get_text(h) is not None for h in (ANDROID_HOOK, ANDROID_INITD, ANDROID_MAGISK_HOOK)):        # one place is enough
+                raise FBToolsError("could not write a boot hook (the system is read-only and Magisk has no service.d folder)")
             r = dev.adb("install", "-r", pl("android", "FBTools.apk"), timeout=180)          # the icon stays, in case the boot start fails
             if b"Success" not in r.stdout: raise FBToolsError("icon install failed: " + (r.stdout + r.stderr).decode(errors="replace").strip()[-200:])
+            android_allow_icon_su(dev, log)
         else:
             if hook:
                 log("Removing the boot hook...")
-                dev.sh("mount -o remount,rw /system; rm %s; mount -o remount,ro /system" % ANDROID_HOOK, timeout=60)
+                dev.sh("mount -o remount,rw /system; rm %s; rm %s; rm %s; mount -o remount,ro /system" % (ANDROID_HOOK, ANDROID_INITD, ANDROID_MAGISK_HOOK), timeout=60)
             if mode == "home":
                 log("Installing the FB Tools icon...")
                 apk = pl("android", "FBTools.apk")
                 r = dev.adb("install", "-r", apk, timeout=180)
                 if b"Success" not in r.stdout: raise FBToolsError("icon install failed: " + (r.stdout + r.stderr).decode(errors="replace").strip()[-200:])
+                android_allow_icon_su(dev, log)
             else:
                 log("Removing the FB Tools icon...")
                 dev.adb("uninstall", APK_PACKAGE, timeout=60)
@@ -393,7 +420,7 @@ def do_uninstall(dev, plat, remove_data, log):
             log("Removing the FB Tools tweak and its loader, then restarting SpringBoard...")
     else:
         log("Removing the boot hook and the icon...")
-        dev.sh("echo off > %s/fbboot_off; mount -o remount,rw /system; rm %s; mount -o remount,ro /system" % (b, ANDROID_HOOK), timeout=60)
+        dev.sh("echo off > %s/fbboot_off; mount -o remount,rw /system; rm %s; rm %s; rm %s; mount -o remount,ro /system" % (b, ANDROID_HOOK, ANDROID_INITD, ANDROID_MAGISK_HOOK), timeout=60)
         dev.adb("uninstall", APK_PACKAGE, timeout=60)
     files = m.get("files") or [r for _, r, _ in expected_files(plat, [a["id"] for a in apps_for(plat)])]
     log("Removing %d program files..." % len(files))

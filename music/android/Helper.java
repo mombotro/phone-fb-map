@@ -5,6 +5,7 @@
 //   out: state playing|paused|stopped|ended|error TEXT      pos MS DURATION_MS
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import java.io.BufferedReader;
@@ -27,8 +28,16 @@ public class Helper {
 
     static void play(String path) { play(path, false); }
 
+    // Android 8 and newer: the media server may not read files that belong to the shell (the label of /data/local/tmp), so give the
+    // file a media label first. Needs root, which this helper has. Failure is harmless.
+    static void relabel(String path) {
+        if (Build.VERSION.SDK_INT < 26) return;
+        try { Runtime.getRuntime().exec(new String[] { "chcon", "u:object_r:media_rw_data_file:s0", path }).waitFor(); } catch (Exception e) { }
+    }
+
     static void play(String path, boolean loop) {
         release();
+        relabel(path);
         try {
             mp = new MediaPlayer();
             mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
@@ -68,6 +77,7 @@ public class Helper {
     }
 
     public static void main(String[] args) throws Exception {
+        Shim.install();
         Looper.prepare();                                    // MediaPlayer callbacks arrive on this thread
         h = new Handler(Looper.myLooper());
         say("ready");

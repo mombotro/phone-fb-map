@@ -18,7 +18,9 @@ The last update was on 2026-10-10.
 | iPhone 4 (GSM, iPhone3,2) | iOS 7.1.2 | Pangu jailbreak (untethered) | Most features work. This unit cannot activate now. |
 | iPhone 5s (iPhone6,1) | iOS 12.5.7 | Chimera jailbreak (semi-untethered) | The picker, Paint, Notes, and Timer work, with no run limit when the tweak is installed. This unit is not jailbroken now (see the note below). |
 | LG Intuition (VS950) | Android 4.1.2 | Root (SuperSU) | Most features work, including boot into FB Tools. |
-| Nexus 4 | Android 7.1.2 (LineageOS 14.1) | Root (adb root) | Display, touch, shell, and Paint work. The rest is Unknown. |
+| Nexus 4 | Android 7.1.2 (LineageOS 14.1) | Root (adb root) | A test pattern, touch, shell, and Paint work. The picker shows a black screen (not solved). |
+| Barnes & Noble Nook HD | Android 7.1.1 (LineageOS 14.1) | Root (su) | The picker and icon work. Boot into FB Tools gives a black screen. |
+| Motorola Moto E5 Play (Sprint) | Android 8.0 | Root (Magisk, after a Motorola bootloader unlock) | The picker, touch, apps, TIC-80 sound, and music work. |
 | Kindle Fire (1st generation) | Android 2.3.4 | Root (su) | The picker, apps, sound, and FB Tools manager work. The screen is rotated in software. |
 | Moto Z2 Force | Android 8.0 | Not rooted (bootloader is unlocked) | No. It needs root first. |
 
@@ -123,6 +125,29 @@ The touch panel has portrait axes, and the code handles that. Set `/data/local/t
 | Shell | Unknown | |
 
 The shell in Android 2.3 has no `test` or `[`, and it crashes on `trap`. The program `fbrun` (in `launcher/fbrun.c`) does the work of the old shell scripts.
+
+## Barnes & Noble Nook HD (LineageOS 14.1, Android 7.1.1, TI OMAP4)
+
+| Feature | Status | Notes |
+|---|---|---|
+| Drawing to the screen | Works | 900 x 1440, two pages. |
+| Touch | Unknown | The panel (ft5x06_ts) ends a touch with a zero-size contact and BTN_TOUCH up. The code now handles that. Not checked with a finger. |
+| App picker started by hand | Works | Phone Files "Start now" works. |
+| Home-screen icon | Works | The ROM's `su` was setuid and its root setting was never saved to a file. Phone Files now fixes both when the start mode is "icon" or "boot". |
+| Boot straight into FB Tools | No | The boot script runs (`/system/etc/init.d/99fbtools`), but the screen stays black. Start it by hand. |
+
+## Motorola Moto E5 Play, Sprint XT1921-5 (Android 8.0, Snapdragon 425)
+
+| Feature | Status | Notes |
+|---|---|---|
+| Opening the phone | Works | Motorola's own unlock code (free account) unlocks the bootloader and erases the phone. TWRP boots once with `fastboot boot`. Magisk 27 installs from TWRP. |
+| Drawing to the screen | Works | Android 8 runs the display as a separate service (`hwcomposer-2-1`). The launcher stops it with Android, or the screen stays on the old Android picture. |
+| Multitouch | Works | |
+| App picker and apps | Works | |
+| TIC-80 sound | Works | Android 8 players need the appops and audio services, which are in the part of Android that is stopped. A stand-in for both is in the sound helper. |
+| Music | Works | The media server cannot read files in `/data/local/tmp`. The helper gives each song a media label first. |
+| Home-screen icon | Unknown | The first tap needs a Magisk "Grant Superuser" tap. |
+| Boot straight into FB Tools | Unknown | Uses a Magisk `service.d` script. Not checked yet. |
 
 ## Moto Z2 Force (Android 8.0)
 

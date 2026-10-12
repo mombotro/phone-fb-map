@@ -8,6 +8,7 @@ import java.io.InputStream;
 
 public class Pcm {
     public static void main(String[] a) throws Exception {
+        Shim.install();
         int rate = a.length > 0 ? Integer.parseInt(a[0]) : 44100;
         float vol = (a.length > 1 ? Integer.parseInt(a[1]) : 100) / 100f;
         int min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);

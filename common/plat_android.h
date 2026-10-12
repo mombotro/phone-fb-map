@@ -481,6 +481,7 @@ PLAT_FN void plat_close(void) {
 typedef struct { int active, x, y; } PlatSlot;
 static PlatSlot plat__slots[PLAT_NSLOT], plat__pend[PLAT_NSLOT];
 static int plat__tfd = -1, plat__cur, plat__protoA, plat__npend, plat__px, plat__py, plat__phas;
+static int plat__btn_seen, plat__btn, plat__has_major, plat__major;    // protocol A touch screens that end a touch with a zero-size contact and BTN_TOUCH up
 static int plat__mt, plat__minx, plat__maxx, plat__miny, plat__maxy, plat__sw, plat__sh;
 static int plat__tportrait, plat__tflip;                          // panel axes are portrait while the screen is landscape; flip bits
 
@@ -535,21 +536,24 @@ PLAT_FN int plat_touch_poll(PlatTouch *out, int max) {
             if (t == EV_ABS) {
                 if (c == ABS_MT_SLOT) plat__cur = (v >= 0 && v < PLAT_NSLOT) ? v : 0;
                 else if (c == ABS_MT_TRACKING_ID) plat__slots[plat__cur].active = v >= 0;
+                else if (c == ABS_MT_TOUCH_MAJOR) { plat__major = v; plat__has_major = 1; }
                 else if (c == ABS_MT_POSITION_X) { plat__slots[plat__cur].x = plat__px = v; plat__phas |= 1; }
                 else if (c == ABS_MT_POSITION_Y) { plat__slots[plat__cur].y = plat__py = v; plat__phas |= 2; }
                 else if (!plat__mt && c == ABS_X) plat__slots[0].x = v;
                 else if (!plat__mt && c == ABS_Y) plat__slots[0].y = v;
-            } else if (t == EV_KEY && c == BTN_TOUCH && !plat__mt) {
-                plat__slots[0].active = v;
+            } else if (t == EV_KEY && c == BTN_TOUCH) {
+                plat__btn_seen = 1; plat__btn = v;
+                if (!plat__mt) plat__slots[0].active = v;
             } else if (t == EV_SYN && c == 2 /* SYN_MT_REPORT */) {   // protocol A: one contact done
                 plat__protoA = 1;
-                if (plat__phas == 3 && plat__npend < PLAT_NSLOT) {
+                if (plat__phas == 3 && plat__npend < PLAT_NSLOT && !(plat__has_major && plat__major == 0)) {          // a contact of size 0 is a finger lifting
                     plat__pend[plat__npend].x = plat__px; plat__pend[plat__npend].y = plat__py;
                     plat__pend[plat__npend].active = 1; plat__npend++;
                 }
-                plat__phas = 0;
+                plat__phas = 0; plat__has_major = 0;
             } else if (t == EV_SYN && c == SYN_REPORT) {
                 if (plat__protoA) {                                  // frame complete: contacts = pending list
+                    if (plat__btn_seen && !plat__btn) plat__npend = 0;          // BTN_TOUCH is up: no finger is down
                     for (int s = 0; s < PLAT_NSLOT; s++) {
                         plat__slots[s].active = s < plat__npend;
                         if (s < plat__npend) { plat__slots[s].x = plat__pend[s].x; plat__slots[s].y = plat__pend[s].y; }

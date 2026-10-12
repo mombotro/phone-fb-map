@@ -58,12 +58,36 @@ static void wait_ready(void) {
     sleep(3);
 }
 
+// Android 8 and newer run the display driver as a separate service (the graphics composer, "hwcomposer-2-1" and the like). "stop" does
+// not stop it, so it keeps the display hardware's overlay pipes, and the program's own pans then fail ("unable to allocate base
+// pipe", a black screen). So find every running service with "composer" in its name, stop it with the framework, and start it first
+// when Android is given back.
+static char g_comp[4][64]; static int g_ncomp;
+static void find_composers(void) {
+    FILE *p = popen("getprop 2>/dev/null", "r");
+    if (!p) return;
+    char line[256]; g_ncomp = 0;
+    while (fgets(line, sizeof line, p) && g_ncomp < 4) {
+        char *a = strstr(line, "[init.svc."); if (!a) continue;
+        char *e = strchr(a + 10, ']'); if (!e) continue;
+        *e = 0; char *name = a + 10;
+        if (!strstr(name, "composer")) continue;
+        if (!strstr(e + 1, "running")) continue;
+        snprintf(g_comp[g_ncomp++], sizeof g_comp[0], "%s", name);
+    }
+    pclose(p);
+}
+static void composers(const char *verb) {
+    for (int i = 0; i < g_ncomp; i++) { char cmd[128]; snprintf(cmd, sizeof cmd, "%s %s", verb, g_comp[i]); (void)!system(cmd); }
+}
+
 static void write_sysfs(const char *path, const char *val) {
     int fd = open(path, O_WRONLY);
     if (fd >= 0) { (void)!write(fd, val, strlen(val)); close(fd); }
 }
 // A blank and unblank before "start" resets the display pipes, so Android comes back on a clean display.
 static void give_back_android(void) {
+    composers("start");
     write_sysfs("/sys/class/graphics/fb0/blank", "4");
     sleep(1);
     write_sysfs("/sys/class/graphics/fb0/blank", "0");
@@ -80,7 +104,10 @@ static void run_once(const char *prog, long seconds, int kiosk) {
     wait_ready();
     if (g_stop) { logline("stopped by a signal before starting"); return; }
     logline("stopping Android and starting the program");
+    find_composers();
     (void)!system("stop");
+    composers("stop");
+    if (g_ncomp) sleep(1);
     g_child = fork();
     if (g_child == 0) {
         setpgid(0, 0);                                                  // its own group, so everything it starts can be stopped together
