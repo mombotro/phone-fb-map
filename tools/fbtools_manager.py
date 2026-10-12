@@ -560,6 +560,18 @@ def do_start(dev, plat, log):
         dev.sh("(sh /var/root/run_ios12.sh fblauncher 3000 </dev/null >/dev/null 2>&1 &) ; true", timeout=20)
 
 
+def do_to_android(dev, plat, log):
+    """End the picker and give the screen back to Android now. A boot hook still starts FB Tools again at the next restart."""
+    if plat != "android": raise FBToolsError("This button works on Android phones only.")
+    b = PLATFORMS[plat]["base"]
+    if hasattr(dev, "ensure_root"): dev.ensure_root()
+    out = dev.sh("p=$(cat %s/fbrun.pid 2>/dev/null); if [ -n \"$p\" ] && kill -0 $p 2>/dev/null; then kill $p; echo stopped; else echo none; fi" % b, timeout=20).stdout.decode()
+    if "stopped" in out:
+        log("FB Tools is ending. Android comes back in about 15 seconds.")
+    else:
+        log("FB Tools is not running. Android is already on screen.")
+
+
 # ---------------------------------------------------------------- status
 
 def status(dev):

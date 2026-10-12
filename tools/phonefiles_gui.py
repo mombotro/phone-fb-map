@@ -632,6 +632,8 @@ def fbtools_start(dev, action, body):
         return fbm.start_job(dev, "%s app" % act.capitalize(), lambda log: fbm.do_app(dev, plat, aid, act, log)).id
     if action == "start":
         return fbm.start_job(dev, "Start FB Tools", lambda log: fbm.do_start(dev, plat, log)).id
+    if action == "android":
+        return fbm.start_job(dev, "Back to Android", lambda log: fbm.do_to_android(dev, plat, log)).id
     if action == "clock":
         return fbm.start_job(dev, "Set the clock", lambda log: fbm.do_set_clock(dev, plat, log)).id
     raise PhoneError("unknown FB Tools action")
