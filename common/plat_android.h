@@ -86,6 +86,9 @@ static double plat__now(void) {
 // tools it starts) that the screen is off. While it is off, touches are ignored and nothing is drawn.
 #define PLAT_OFF_FLAG "/data/local/tmp/fbscreen_off"
 static int plat__pwr_fd[4], plat__npwr, plat__off, plat__bl_on = 128;
+static int plat__vol_fd[4], plat__nvol, plat__vol_ev;           // the volume keys: they change the master volume (see plat_volume_get)
+static int plat_volume_get(void);
+static void plat_volume_set(int v);
 static char plat__bl_use[96];
 static double plat__wake_t;
 
@@ -145,7 +148,17 @@ static void plat__power_events(int toggle) {                             // togg
         for (int k = 0; k < n / (int)sizeof ev[0]; k++) if (ev[k].type == EV_KEY && ev[k].code == KEY_POWER && ev[k].value == 1) pressed = 1;
     }
     if (pressed && toggle) plat__screen_set(!plat__off);
+    for (int i = 0; i < plat__nvol; i++) for (;;) {                            // volume keys: a program that waits throws them away
+        ssize_t n = read(plat__vol_fd[i], ev, sizeof ev); if (n <= 0) break;
+        for (int k = 0; toggle && k < n / (int)sizeof ev[0]; k++) {
+            if (ev[k].type != EV_KEY || ev[k].value == 0) continue;
+            int step = ev[k].code == KEY_VOLUMEUP ? 5 : ev[k].code == KEY_VOLUMEDOWN ? -5 : 0;
+            if (step) { plat_volume_set(plat_volume_get() + step); plat__vol_ev = 1; }
+        }
+    }
 }
+// 1 once after a volume key changed the master volume. Read plat_volume_get() then.
+static int plat_volume_event(void) { int e = plat__vol_ev; plat__vol_ev = 0; return e; }
 static void plat__screen_set(int off) {
     if (off == plat__off) return;
     if (off) {
@@ -607,6 +620,10 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
         if (plat__bit(key, KEY_POWER) && plat__npwr < 4) {                  // a device with a power key: read it too
             int d = dup(fd);
             if (d >= 0) { plat__pwr_fd[plat__npwr++] = d; fprintf(stderr, "power key: %s (%s)\n", path, name); }
+        }
+        if (plat__bit(key, KEY_VOLUMEUP) && plat__bit(key, KEY_VOLUMEDOWN) && plat__nvol < 4) {
+            int d = dup(fd);
+            if (d >= 0) { plat__vol_fd[plat__nvol++] = d; fprintf(stderr, "volume keys: %s (%s)\n", path, name); }
         }
         if ((!mt && !st) || plat__tfd >= 0) { close(fd); continue; }       // not a touchscreen, or we already have one
         struct input_absinfo ax, ay;

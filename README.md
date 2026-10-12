@@ -18,7 +18,7 @@ For the details of each device, read [docs/DEVICE-MAP.md](docs/DEVICE-MAP.md). T
 | `fbshell` | A shell with an on-screen keyboard. | iPhone 4, Nexus 4 |
 | `calib` | Measures the touch axes. It writes the result to a file. | iPhone 4 |
 | `tic80` | A TIC-80 player for `.tic` and `.lua` carts, with sound. In landscape the game is in the middle, the D-pad on the left, and the buttons on the right. It comes with two carts: a beat box (loops you switch on and off, faster or slower) and a sound test. | iPhone 4, Kindle Fire |
-| `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. On Android it plays through the system MediaPlayer. | iPhone 4, LG Intuition |
+| `musicplayer` | A touch music player for a folder of music. It plays MP3, M4A, AAC, WAV, AIFF, FLAC, and Ogg. It has shuffle and repeat (off, folder, song). On Android it plays through the system MediaPlayer, its volume is the phone's own volume (drag the bar or use the volume keys), and the music keeps playing when you leave the app: the picker shows a bar with the song name and pause and stop buttons. | iPhone 4, LG Intuition |
 | `fblauncher` | An app picker with big touch tiles. It starts the other tools and returns to the picker when a tool ends. A home-screen icon, FB Tools, starts it. | iPhone 4 |
 | `notes` | Notes and to-do lists. Each note is a `.txt` file. A line that starts with `[ ] ` is a tick-box. The TODO view lists all open items. | iPhone 4, Nexus 4, LG Intuition |
 | `timer` | A stopwatch, a countdown timer, and an alarm clock. The timer and the alarm ring while the program runs. The alarm wakes a blank screen. | iPhone 4, Nexus 4, LG Intuition |

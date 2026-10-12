@@ -20,6 +20,9 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifndef __APPLE__
+#include "../common/musicstate.h"
+#endif
 
 #ifdef __APPLE__
 #define BASE "/var/root"
@@ -183,6 +186,10 @@ int main(int argc, char **argv) {
     const int rows = (nshown + COLS - 1) / COLS;
     int tile_h = (H - HDR - TG * (rows + 1)) / (rows ? rows : 1);
     if (tile_h > 210) tile_h = 210;
+#ifndef __APPLE__
+    // While music plays in the background a bar at the bottom shows the song, with a pause/play button and a stop button. The tiles shrink to make room.
+    const int MB_H = 84; int barh = 0; MusicState mus; memset(&mus, 0, sizeof mus); double next_mus = 0;
+#endif
 
     enum { S_MAIN, S_CARTS, S_SHUT } state = S_MAIN;
     int scroll = 0, dirty = 3, pressed = -1, menu = 0;
@@ -210,6 +217,17 @@ int main(int argc, char **argv) {
     while (now() - t0 < seconds) {
         PlatTouch tc[10];
         int n = plat_touch_poll(tc, 10);
+#ifndef __APPLE__
+        if (plat_volume_event() && !drag) { vol = plat_volume_get(); dirty = 3; }          // a volume key moved it
+        if (now() >= next_mus) {
+            next_mus = now() + 0.4;
+            MusicState m; music_state_read(&m);
+            int on = m.alive && m.playing;
+            if (on != (barh > 0) || (on && (m.paused != mus.paused || strcmp(m.file, mus.file)))) dirty = 3;
+            mus = m; barh = on ? MB_H : 0;
+            tile_h = (H - HDR - barh - TG * (rows + 1)) / (rows ? rows : 1); if (tile_h > 210) tile_h = 210;
+        }
+#endif
         int cur = n > 0;
         int tap = 0, tx = 0, ty = 0;
         if (cur && !prev) { down_x = tc[0].x; down_y = tc[0].y; last_y = down_y; down_t = now(); moved = 0; pressed = -2; dirty = 3; }
@@ -258,7 +276,10 @@ int main(int argc, char **argv) {
                     if (want_land != now_land) {
                         plat_orientation_set(want_land);
                         char self[256]; ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
-                        if (n > 0) { self[n] = 0; plat_close(); execv(self, argv); }
+                        if (n > 0) {
+                            self[n] = 0; char *dl = strstr(self, " (deleted)"); if (dl) *dl = 0;           // the file was replaced while we ran
+                            plat_close(); execv(self, argv);
+                        }
                     }
                 } else if (row == 4 && nfont > 0) {                              // reading font: chunky, then each font file in turn
                     curfont = (curfont + 1) % (nfont + 1);
@@ -278,6 +299,12 @@ int main(int argc, char **argv) {
             menu = 1; dirty = 3;
 #ifndef __APPLE__
             settings = 0;
+#endif
+#ifndef __APPLE__
+        } else if (tap && state == S_MAIN && barh && ty >= H - barh) {                   // the music bar: pause or play, or stop
+            if (tx >= W - 100) music_cmd("stop"); else if (tx >= W - 250) music_cmd(mus.paused ? "resume" : "pause");
+            if (tx >= W - 250) { mus.paused = !mus.paused; next_mus = now() + 0.6; }
+            dirty = 3;
 #endif
         } else if (tap && state == S_MAIN) {
             for (int k = 0; k < nshown; k++) {
@@ -390,6 +417,20 @@ int main(int argc, char **argv) {
                     (void)sl;
                 }
 #ifndef __APPLE__
+                if (barh) {
+                    int by = H - barh; uint32_t bg = s.theme ? 0x000000 : 0x26303E;
+                    draw_rect(&s, 0, by, W, barh, s.theme ? 0xFFFFFF : 0x9AAABB); draw_rect(&s, 0, by + 4, W, barh - 4, bg);
+                    char nm[256]; snprintf(nm, sizeof nm, "%s", mus.file); char *dot = strrchr(nm, '.'); if (dot && dot != nm && strlen(dot) <= 6) *dot = 0;
+                    int maxc = (W - 270) / 16; if ((int)strlen(nm) > maxc) { nm[maxc > 1 ? maxc - 1 : 0] = '~'; nm[maxc > 1 ? maxc : 1] = 0; }
+                    draw_text(&s, 16, by + 14, 2, mus.paused ? "PAUSED" : "NOW PLAYING", s.theme ? 0x8899AA : 0x99AABB);
+                    draw_text(&s, 16, by + 44, 2, nm, 0xFFFFFF);
+                    uint32_t edge2 = s.theme ? 0xFFFFFF : 0x9AAABB;
+                    draw_rect(&s, W - 244, by + 14, 134, barh - 24, edge2); draw_rect(&s, W - 240, by + 18, 126, barh - 32, bg);
+                    const char *pl = mus.paused ? "PLAY" : "PAUSE";
+                    draw_text(&s, W - 240 + (126 - (int)strlen(pl) * 16) / 2, by + 14 + (barh - 24 - 16) / 2, 2, pl, 0xFFFFFF);
+                    draw_rect(&s, W - 96, by + 14, 86, barh - 24, edge2); draw_rect(&s, W - 92, by + 18, 78, barh - 32, bg);
+                    draw_text(&s, W - 92 + (78 - 4 * 16) / 2, by + 14 + (barh - 24 - 16) / 2, 2, "STOP", 0xFFFFFF);
+                }
                 if (settings) {
                     uint32_t edge = s.theme ? 0xFFFFFF : 0x9AAABB, inner = s.theme ? 0x000000 : 0x202C3C, dim = s.theme ? 0x8899AA : 0xDDDDDD;
                     draw_rect(&s, SP_X, SP_Y, SP_W, sp_rows * SP_ROW + 8, edge);
@@ -502,6 +543,9 @@ int main(int argc, char **argv) {
             usleep(12000);
         }
     }
+#ifndef __APPLE__
+    { MusicState m; if (music_state_read(&m)) music_cmd("quit"); }          // the music ends with the picker
+#endif
     plat_close();
     return 0;
 }
