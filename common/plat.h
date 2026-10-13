@@ -15,11 +15,12 @@ typedef struct {
     int w, h;
     int rs, gs, bs;         // channel shifts of the pixel format
     uint32_t alpha;         // OR'd into every pixel
-    int theme;              // 1 = palmtop look (see draw.h). Set by the platform from $FB_THEME or the file <data>/theme ("palm" or "dark")
+    int theme;              // 0 = the colours as given, 1 and up = the number of a colour theme (theme.h). Set by the platform from $FB_THEME or the name in the file <data>/theme
 } PlatInfo;
 
 typedef struct { int id, x, y; } PlatTouch;     // x,y in screen pixels
 
+#include "theme.h"
 #ifdef __APPLE__
 #include "plat_ios.h"
 #else

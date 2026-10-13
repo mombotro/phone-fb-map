@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "font8x16.h"
+#include "theme.h"
 
 typedef struct {
     uint32_t *px;
@@ -12,28 +13,41 @@ typedef struct {
     int w, h;
     int rs, gs, bs;
     uint32_t alpha;
-    int theme;                  // 1 = the palmtop look: every colour is mapped to a grey-green LCD palette. 0 = colours as given.
+    int theme;                  // 0 = colours as given. 1 and up: the number of a colour theme (theme.h): every colour is mapped to its three colours.
 } Surf;
 
-// The palmtop look. The programs are drawn in a dark palette (dark background, light text). With the theme on, a dark colour becomes
-// the pale LCD colour, a light colour becomes the dark "ink", and the colours between become six shades. Text then picks ink or
-// paper by what is under it, so it always reads. The title-bar colours below are always ink (a black Palm title bar).
-#define TH_PAPER 0xC6CFAE
-#define TH_INK   0x1F2A1B
-static uint32_t draw_theme_color(uint32_t rgb) {
-    if (rgb == 0x26303E || rgb == 0x1B2330) return TH_INK;                    // the bars and panels of the programs
+// The colour themes (theme.h). With a theme on, a dark colour becomes the PAPER colour, a light colour becomes the INK, and the colours between
+// become six shades on the way PAPER, MID, INK. Text then picks ink or paper by what is under it, so it always reads. The title-bar colours below
+// are always ink (like a black Palm title bar).
+static uint32_t draw_theme_color(int th, uint32_t rgb) {
+    if (th <= 0 || th >= THEME_N) return rgb;
+    const Theme *T = &THEMES[th];
+    if (rgb == 0x26303E || rgb == 0x1B2330) return T->ink;                     // the bars and panels of the programs
     int r = (rgb >> 16) & 255, g = (rgb >> 8) & 255, b = rgb & 255;
     int l = (r * 30 + g * 59 + b * 11) / 100;
     int t = (l - 20) * 255 / 215; if (t < 0) t = 0; if (t > 255) t = 255;
     t = (t * 5 + 127) / 255;                                                  // 0..5
-    int pr = (TH_PAPER >> 16) & 255, pg = (TH_PAPER >> 8) & 255, pb = TH_PAPER & 255;
-    int ir = (TH_INK >> 16) & 255, ig = (TH_INK >> 8) & 255, ib = TH_INK & 255;
-    return (uint32_t)(pr + (ir - pr) * t / 5) << 16 | (uint32_t)(pg + (ig - pg) * t / 5) << 8 | (uint32_t)(pb + (ib - pb) * t / 5);
+    uint32_t a0, a1; int num, den;                                            // the first half goes from paper to mid, the second from mid to ink
+    if (t * 2 <= 5) { a0 = T->paper; a1 = T->mid; num = t * 2; den = 5; }
+    else            { a0 = T->mid;   a1 = T->ink; num = t * 2 - 5; den = 5; }
+    int c[3];
+    for (int k = 0; k < 3; k++) { int sh = 16 - 8 * k, x0 = (a0 >> sh) & 255, x1 = (a1 >> sh) & 255; c[k] = x0 + (x1 - x0) * num / den; }
+    return (uint32_t)c[0] << 16 | (uint32_t)c[1] << 8 | (uint32_t)c[2];
 }
 static int draw_lum(uint32_t rgb) { return (((rgb >> 16) & 255) * 30 + ((rgb >> 8) & 255) * 59 + (rgb & 255) * 11) / 100; }
+// The colour of text in a theme: the mapped colour, but if it is too close to what is under the text, whichever of paper and ink is farther from it.
+static uint32_t draw_theme_text(int th, uint32_t dest, uint32_t rgb) {
+    uint32_t want = draw_theme_color(th, rgb);
+    int dl = draw_lum(dest), wl = draw_lum(want);
+    if ((dl > wl ? dl - wl : wl - dl) < 90) {
+        int pl = draw_lum(THEMES[th].paper), il = draw_lum(THEMES[th].ink);
+        want = (dl > pl ? dl - pl : pl - dl) > (dl > il ? dl - il : il - dl) ? THEMES[th].paper : THEMES[th].ink;
+    }
+    return want;
+}
 
 static uint32_t draw_pack(const Surf *s, uint32_t rgb) {
-    if (s->theme) rgb = draw_theme_color(rgb);
+    if (s->theme) rgb = draw_theme_color(s->theme, rgb);
     return (((rgb >> 16) & 0xFF) << s->rs) | (((rgb >> 8) & 0xFF) << s->gs) |
            ((rgb & 0xFF) << s->bs) | s->alpha;
 }
@@ -77,9 +91,7 @@ static void draw_text_plain(Surf *s, int x, int y, int scale, const char *str, u
     if (s->theme && x >= 0 && y >= 0 && x < s->w && y < s->h) {               // look at what is under the first letter, and keep the contrast
         uint32_t d = s->px[(size_t)y * s->stride + x];
         uint32_t dest = (((d >> s->rs) & 255) << 16) | (((d >> s->gs) & 255) << 8) | ((d >> s->bs) & 255);
-        uint32_t want = draw_theme_color(rgb);
-        int dl = draw_lum(dest), wl = draw_lum(want);
-        if ((dl > wl ? dl - wl : wl - dl) < 90) want = dl > 128 ? TH_INK : TH_PAPER;
+        uint32_t want = draw_theme_text(s->theme, dest, rgb);
         c = (((want >> 16) & 0xFF) << s->rs) | (((want >> 8) & 0xFF) << s->gs) | ((want & 0xFF) << s->bs) | s->alpha;
     } else c = draw_pack(s, rgb);
     for (; *str; str++, x += 8 * scale) {

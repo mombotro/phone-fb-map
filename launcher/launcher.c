@@ -131,7 +131,7 @@ static void scan_carts(void) {
     if (!d) return;
     struct dirent *e;
     while ((e = readdir(d))) {
-        static const char *CART_EXT[] = { ".tic", ".lua", ".js", ".moon", ".fnl", ".wren", ".scm", ".py", ".janet", NULL };      // the languages of the TIC-80 player
+        static const char *CART_EXT[] = { ".tic", ".lua", ".js", ".moon", ".fnl", ".wren", ".scm", ".py", ".janet", ".nut", NULL };      // the languages of the TIC-80 player
         int is_cart = 0; for (int k = 0; CART_EXT[k]; k++) if (has_ext(e->d_name, CART_EXT[k])) is_cart = 1;
         if (e->d_name[0] == '.' || !is_cart) continue;
         if (g_ncarts == cap) { cap *= 2; g_carts = realloc(g_carts, cap * sizeof(Cart)); }
@@ -170,6 +170,7 @@ int main(int argc, char **argv) {
     if (plat_init(&pi) || plat_touch_init(&pi)) return 1;
     if (kiosk) { FILE *kf = fopen("/tmp/fbmode", "w"); if (kf) { fputc('K', kf); fclose(kf); } }   // a non-empty flag = kiosk: the tweak also blocks the buttons
     const int W = pi.w, H = pi.h;
+    int theme_cur = pi.theme;                                                    // the colour theme in use (theme.h); the settings panel can change it
 
     // only show tools whose program is installed (the cart picker always shows, the Exit tile only outside kiosk mode)
     int shown[16], nshown = 0;
@@ -200,7 +201,7 @@ int main(int argc, char **argv) {
     // portrait or landscape, and (outside boot mode) a button for Android's own Settings.
     int settings = 0, wifi = -1, bt = -1, vol = 100, bright = 100, drag = 0, nfont = 0, curfont = 0, fsize = 90;
     char fonts[12][64];                                                          // reading font files; index 0 of the cycle is the chunky font     // drag: 0 none, 1 volume slider, 2 brightness slider
-    const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = H < 700 ? 62 : 84, sp_rows = kiosk ? 6 : 7;
+    const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = H < 700 ? 62 : 84, sp_rows = kiosk ? 7 : 8;
     const int SL_X0 = SP_X + 190, SL_X1 = SP_X + SP_W - 112;                      // the slider tracks
 #endif
     double bat_until = 0;
@@ -286,7 +287,10 @@ int main(int argc, char **argv) {
                 } else if (row == 4 && nfont > 0) {                              // reading font: chunky, then each font file in turn
                     curfont = (curfont + 1) % (nfont + 1);
                     save_font_choice(curfont ? fonts[curfont - 1] : ""); ui_font_reload();
-                } else if (row == 6 && !kiosk) {                                  // leave the picker and open the Android screen
+                } else if (row == 6) {                                            // colour theme: the next one (the left part: the one before)
+                    theme_cur = (theme_cur + (tx < SP_X + SP_W / 2 ? THEME_N - 1 : 1)) % THEME_N;
+                    FILE *tf = fopen(BASE "/theme", "w"); if (tf) { fputs(THEMES[theme_cur].name, tf); fputc('\n', tf); fclose(tf); chmod(BASE "/theme", 0666); }
+                } else if (row == 7 && !kiosk) {                                  // leave the picker and open the Android screen
                     FILE *af = fopen("/data/local/tmp/after_start", "w");
                     if (af) { fputs("android.settings.SETTINGS", af); fclose(af); quit = 1; }
                 }
@@ -324,7 +328,7 @@ int main(int argc, char **argv) {
             if (tx >= bx && tx < bx + bw && ty >= 380 && ty < 560) {                 // YES
                 dirty = 0; state = S_MAIN;
                 int stride; uint32_t *px = plat_begin(&stride);
-                Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
+                Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, theme_cur };
                 draw_rect(&s, 0, 0, W, H, 0x000000);
                 draw_text(&s, GAP + 6, H / 2 - 16, 3, "Shutting down...", 0xFFFFFF);
                 plat_flip();
@@ -367,7 +371,7 @@ int main(int argc, char **argv) {
         { static int last_min = -1; time_t tt = time(NULL); struct tm lt; localtime_r(&tt, &lt); if (lt.tm_min != last_min) { last_min = lt.tm_min; dirty = 3; } }
         if (dirty > 0) {
             int stride; uint32_t *px = plat_begin(&stride);
-            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, pi.theme };
+            Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha, theme_cur };
             draw_rect(&s, 0, 0, W, H, 0x101820);
             if (state == S_MAIN) {
                 // title bar (ink) with the name and the time, like a palmtop; with the theme off it is the old dark header
@@ -487,9 +491,21 @@ int main(int argc, char **argv) {
                             draw_text(&s, SL_X1 + 20, y5 + (SP_ROW - 32) / 2, 2, vb, 0xFFFFFF);
                         } else draw_text(&s, SL_X0, y5 + (SP_ROW - 16) / 2, 1, "pick a font first", dim);
                     }
-                    // row 6: Android's own Settings app, for networks and Bluetooth (not in boot mode, where there is no way out)
+                    // row 6: the colour theme. Tap the left half for the one before, the right half for the next one. Three squares show its colours.
+                    {
+                        int y6 = ty0 + 6 * SP_ROW, bx = SP_X + 12, by = y6 + 12, bw = SP_W - 24, bh = SP_ROW - 24;
+                        draw_rect(&s, bx, by, bw, bh, edge); draw_rect(&s, bx + 4, by + 4, bw - 8, bh - 8, inner);
+                        char tn[40]; snprintf(tn, sizeof tn, "< %s >", THEMES[theme_cur].label);
+                        draw_text(&s, bx + (bw - (int)strlen(tn) * 16) / 2 - 36, by + (bh - 32) / 2, 2, tn, 0xFFFFFF);
+                        if (theme_cur > 0) for (int k = 0; k < 3; k++) {               // paper, mid and ink as they are (not mapped by the theme)
+                            uint32_t c3 = k == 0 ? THEMES[theme_cur].paper : k == 1 ? THEMES[theme_cur].mid : THEMES[theme_cur].ink;
+                            int sx = bx + bw - 12 - 3 * (bh - 16) + k * (bh - 16) - 4;
+                            Surf raw = s; raw.theme = 0; draw_rect(&raw, sx, by + 8, bh - 20, bh - 16, 0xFFFFFF); draw_rect(&raw, sx + 2, by + 10, bh - 24, bh - 20, c3);
+                        }
+                    }
+                    // row 7: Android's own Settings app, for networks and Bluetooth (not in boot mode, where there is no way out)
                     if (!kiosk) {
-                        int y3 = ty0 + 6 * SP_ROW, bx = SP_X + 12, by = y3 + 12, bw = SP_W - 24, bh = SP_ROW - 24;
+                        int y3 = ty0 + 7 * SP_ROW, bx = SP_X + 12, by = y3 + 12, bw = SP_W - 24, bh = SP_ROW - 24;
                         draw_rect(&s, bx, by, bw, bh, edge); draw_rect(&s, bx + 4, by + 4, bw - 8, bh - 8, inner);
                         const char *nm = "ANDROID SETTINGS";
                         draw_text(&s, bx + (bw - (int)strlen(nm) * 16) / 2, by + (bh - 32) / 2, 2, nm, 0xFFFFFF);

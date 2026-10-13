@@ -23,10 +23,10 @@ static int plat__screen_off;                 // /tmp/fbscreen_off exists: the po
 static double plat__off_check;
 static double plat__reassert_until, plat__last_reassert;   // after the screen comes back on, keep re-showing our picture
 
-static int plat__theme_setting(void) {                      // palm (the default) or dark
+static int plat__theme_setting(void) {                      // the number of the colour theme (theme.h): $FB_THEME or the name in the file; palm is the default
     const char *e = getenv("FB_THEME"); char b[16] = "";
     if (!e) { FILE *f = fopen("/var/root/theme", "r"); if (f) { if (fscanf(f, "%15s", b) == 1) e = b; fclose(f); } }
-    return !(e && !strcmp(e, "dark"));
+    return theme_index(e);
 }
 
 PLAT_FN int plat_init(PlatInfo *pi) {

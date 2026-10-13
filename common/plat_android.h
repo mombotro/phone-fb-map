@@ -515,10 +515,10 @@ static void plat_timezone_refresh(void) {                        // the offset c
     }
     unsetenv("TZ"); plat__timezone();
 }
-static int plat__theme_setting(void) {                      // palm (the default) or dark
+static int plat__theme_setting(void) {                      // the number of the colour theme (theme.h): $FB_THEME or the name in the file; palm is the default
     const char *e = getenv("FB_THEME"); char b[16] = "";
     if (!e) { FILE *f = fopen("/data/local/tmp/theme", "r"); if (f) { if (fscanf(f, "%15s", b) == 1) e = b; fclose(f); } }
-    return !(e && !strcmp(e, "dark"));
+    return theme_index(e);
 }
 
 PLAT_FN int plat_init(PlatInfo *pi) {

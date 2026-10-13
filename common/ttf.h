@@ -62,12 +62,11 @@ static TtfGlyph *ttf_glyph(TtfFont *f, int c) {
 static void ttf_draw_run(Surf *s, TtfFont *f, int x, int base, int y_probe, const char *t, int len, uint32_t rgb) {
     uint32_t want = rgb;
     if (s->theme) {                                                          // the same contrast rule as draw_text_plain
-        want = draw_theme_color(rgb);
+        want = draw_theme_color(s->theme, rgb);
         if (x >= 0 && y_probe >= 0 && x < s->w && y_probe < s->h) {
             uint32_t d = s->px[(size_t)y_probe * s->stride + x];
             uint32_t dest = (((d >> s->rs) & 255) << 16) | (((d >> s->gs) & 255) << 8) | ((d >> s->bs) & 255);
-            int dl = draw_lum(dest), wl = draw_lum(want);
-            if ((dl > wl ? dl - wl : wl - dl) < 90) want = dl > 128 ? TH_INK : TH_PAPER;
+            want = draw_theme_text(s->theme, dest, rgb);
         }
     }
     int fr = (want >> 16) & 255, fg = (want >> 8) & 255, fb = want & 255;

@@ -35,6 +35,9 @@ FILES="$FILES $SRC/src/api/python.c"; LANGDEFS="$LANGDEFS -DTIC_BUILD_WITH_PYTHO
 # Janet (the single C file is made by "make build/c/janet.c" in vendor/janet: a Mac C compiler is enough)
 [ -f "$V/janet/build/c/janet.c" ] || (cd "$V/janet" && make build/c/janet.c >/dev/null)
 FILES="$FILES $V/janet/build/c/janet.c $SRC/src/api/janet.c"; LANGDEFS="$LANGDEFS -DTIC_BUILD_WITH_JANET"; LANGINC="$LANGINC -I$V/janet/src/include -I$V/janet/src/conf"
+# Squirrel (C++: compiled as C++ without exceptions or run time type information; the player links the C++ library)
+SQ=$V/squirrel; for f in squirrel/sqapi squirrel/sqbaselib squirrel/sqclass squirrel/sqcompiler squirrel/sqdebug squirrel/sqfuncstate squirrel/sqlexer squirrel/sqmem squirrel/sqobject squirrel/sqstate squirrel/sqtable squirrel/sqvm sqstdlib/sqstdaux sqstdlib/sqstdblob sqstdlib/sqstdio sqstdlib/sqstdmath sqstdlib/sqstdrex sqstdlib/sqstdstream sqstdlib/sqstdstring sqstdlib/sqstdsystem; do FILES="$FILES $SQ/$f.cpp"; done
+FILES="$FILES $SRC/src/api/squirrel.c"; LANGDEFS="$LANGDEFS -DTIC_BUILD_WITH_SQUIRREL"; LANGINC="$LANGINC -I$SQ/include -I$SQ/squirrel -I$SQ/sqstdlib"
 # WebAssembly (wasm3)
 for f in m3_bind m3_code m3_compile m3_core m3_parse m3_env m3_exec m3_function m3_info m3_module; do FILES="$FILES $V/wasm3/source/$f.c"; done
 FILES="$FILES $SRC/src/api/wasm.c"; LANGDEFS="$LANGDEFS -DTIC_BUILD_WITH_WASM -Dd_m3LogOutput=0"; LANGINC="$LANGINC -I$V/wasm3/source"
@@ -57,15 +60,16 @@ build() {   # build <name> <compiler...>   (compiles every file, 8 at a time)
     i=0
     for f in $FILES; do
         i=$((i+1)); o=obj/$name/$(printf %03d $i)_$(basename "$f" .c).o
-        XF=""
+        XF=""; LANGSTD="-std=gnu11"
         case "$f" in
+            *.cpp) LANGSTD="-x c++ -std=c++11 -fno-exceptions -fno-rtti"; [ "$name" = ios ] && LANGSTD="$LANGSTD -stdlib=libc++ -isystem /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1";;
             */quickjs/*) XF="-funsigned-char -D_GNU_SOURCE"; [ "$name" = ios ] && XF="$XF -include $PWD/ios_compat.h";;
             */janet/*) XF="-D_GNU_SOURCE -DJANET_SINGLE_THREADED -DJANET_NO_EV -DJANET_NO_NET -DJANET_NO_PROCESSES -DJANET_NO_FFI -DJANET_NO_DYNAMIC_MODULES"; [ "$name" = ios ] && XF="$XF -DMAC_OS_X_VERSION_10_12=101200 -include $PWD/ios_compat.h -I$PWD/shim";;       # one thread, no sockets or child processes
             */wasm3/*) XF="-DM3_HAS_TAIL_CALL=0";;                                   # clang cannot do the tail calls on 32 bit ARM
             */pocketpy/*) [ "$name" = ios ] && XF="-D_Thread_local= -include $PWD/ios_compat.h";;                # iOS 7 has no thread local storage; one thread is enough
             */s7/*) [ "$name" = ios ] && XF="-include stdlib.h -include setjmp.h -include math.h -include pthread.h -include unistd.h -include time.h -include sys/time.h";;       # s7 defines a macro "noreturn" that clashes with the iOS headers
         esac
-        ("$@" -std=gnu11 -O2 -w $DEFS $INC $XF -c "$f" -o "$o" 2>"$o.err" || { echo "FAILED ($name): $f" >&2; head -3 "$o.err" >&2; }) &
+        ("$@" $LANGSTD -O2 -w $DEFS $INC $XF -c "$f" -o "$o" 2>"$o.err" || { echo "FAILED ($name): $f" >&2; head -3 "$o.err" >&2; }) &
         [ $((i % 8)) -eq 0 ] && wait
     done
     wait
