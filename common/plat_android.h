@@ -172,16 +172,23 @@ static void plat__power_events(int toggle) {                             // togg
 }
 // 1 once after a volume key changed the master volume. Read plat_volume_get() then.
 static int plat_volume_event(void) { int e = plat__vol_ev; plat__vol_ev = 0; return e; }
+// The Qualcomm displays (Nexus 4, Moto E5 Play) lose the picture when the panel is powered down and up again: after the unblank nothing
+// shows until a new frame arrives, which took a tap in the picker. The Kindle (OMAP) keeps scanning the picture out and has no such
+// problem. So on the Qualcomm displays the screen is "off" with the backlight only: the panel stays on, nothing has to start again.
+static int plat__soft_off(void) { return strstr((const char *)plat__f.id, "mdss") || strstr((const char *)plat__f.id, "msm"); }
+
 static void plat__screen_set(int off) {
     if (off == plat__off) return;
     if (off) {
         plat__bl_set(0);
-        ioctl(plat__fd, FBIOBLANK, FB_BLANK_POWERDOWN);
+        if (!plat__soft_off()) ioctl(plat__fd, FBIOBLANK, FB_BLANK_POWERDOWN);
         FILE *f = fopen(PLAT_OFF_FLAG, "w"); if (f) fclose(f);
         chmod(PLAT_OFF_FLAG, 0666);
     } else {
-        ioctl(plat__fd, FBIOBLANK, FB_BLANK_UNBLANK);
-        plat__repaint();                                                    // show the last picture again, as a new frame
+        if (!plat__soft_off()) {
+            ioctl(plat__fd, FBIOBLANK, FB_BLANK_UNBLANK);
+            plat__repaint();                                                // show the last picture again, as a new frame
+        }
         plat__bl_set(plat__bl_on);
         plat__buttons_off(1);
         unlink(PLAT_OFF_FLAG);
