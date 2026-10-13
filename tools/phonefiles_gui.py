@@ -226,8 +226,9 @@ class IOS:
 
     def mv(self, a, b):
         self.guard(a); self.guard(b)
-        r = self.sh("mv %s %s" % (q(a), q(b)), timeout=30)
-        if r.returncode: raise PhoneError(r.stderr.decode(errors="replace"))
+        # a move never replaces something: the phone's own mv would do it without a word
+        r = self.sh("if [ -e %s ]; then echo 'A file or folder with that name is already there.' >&2; exit 3; fi; mv %s %s" % (q(b), q(a), q(b)), timeout=30)
+        if r.returncode: raise PhoneError(r.stderr.decode(errors="replace").strip() or "move failed")
 
 
 # ---------------------------------------------------------------- Android over adb
@@ -419,8 +420,9 @@ class Android:
 
     def mv(self, a, b):
         self.guard(a); self.guard(b)
-        r = self.sh("mv %s %s" % (q(a), q(b)), timeout=30)
-        if r.returncode: raise PhoneError(r.stderr.decode(errors="replace"))
+        # a move never replaces something: the phone's own mv would do it without a word
+        r = self.sh("if [ -e %s ]; then echo 'A file or folder with that name is already there.' >&2; exit 3; fi; mv %s %s" % (q(b), q(a), q(b)), timeout=30)
+        if r.returncode: raise PhoneError(r.stderr.decode(errors="replace").strip() or "move failed")
 
 
 # ---------------------------------------------------------------- device list

@@ -38,6 +38,10 @@
   td.name { width:100%; max-width:0; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
   td.num { color:var(--dim); text-align:right; }
   tr:hover td { background:rgba(127,127,127,.08); }
+  tr.dragging td { opacity:.45; }
+  tr.dropok td, #crumbs a.dropok, .place.dropok { background:rgba(76,141,219,.28); outline:2px solid var(--accent); outline-offset:-2px; }
+  td.pick { width:24px; padding-right:0; }
+  tr[draggable=true] td.name { cursor:grab; }
   .acts button { padding:3px 8px; font-size:12px; margin-left:4px; }
   .acts { text-align:right; }
   button:disabled { opacity:.35; cursor:not-allowed; }
@@ -92,7 +96,7 @@
       <input id="file" type="file" multiple hidden>
     </div>
     <div id="list"></div>
-    <div id="note">&#128274; marks system and app files. Phone Files cannot delete, rename or overwrite them. Your notes, books, pictures, music, carts and app data can be changed. Click a picture to see it.</div>
+    <div id="note">&#128274; marks system and app files. Phone Files cannot delete, rename or overwrite them. Your notes, books, pictures, music, carts and app data can be changed. Click a picture to see it. Drag a file onto a folder, a folder in the path above, or a place on the left to move it. Tick several files to move them together.</div>
     <div id="drop">Drop files or folders to copy them to this folder</div>
   </div>
 </div>
@@ -145,7 +149,7 @@ function renderPlaces() {
   const box = $("places"); box.innerHTML = ""; if (!dev) return;
   for (const p of dev.places) {
     const el = document.createElement("div"); el.className = "place" + (cwd === p.path ? " sel" : ""); el.textContent = p.name;
-    el.onclick = () => go(p.path); box.appendChild(el);
+    el.onclick = () => go(p.path); dropTarget(el, p.path); box.appendChild(el);
   }
 }
 
@@ -156,12 +160,34 @@ async function go(path) {
   catch (e) { entries = []; $("list").innerHTML = `<div id="empty">${esc(e.message)}<br><br><button id="mk2">Create this folder</button></div>`; crumbs(); const b = $("mk2"); if (b) b.onclick = async () => { await act("/api/mkdir", { path: cwd }); go(cwd); }; }
 }
 
+// ---- moving files by dragging. A row can be dragged onto a folder row, a folder name in the path above the list, or a place on the left.
+// Rows that are ticked move together. Protected files cannot be dragged. The phone says no if the name is taken at the target.
+const MOVE_TYPE = "application/x-phonefiles-move";
+let moving = null;                                           // {names, from} while a row is dragged
+const isMove = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes(MOVE_TYPE);
+function ticked() { return [...document.querySelectorAll("#list input.pick:checked")].map((c) => c.dataset.name); }
+async function moveInto(folder) {
+  if (!moving) return; const m = moving; moving = null;
+  const names = m.names.filter((n) => join(m.from, n) !== folder && !folder.startsWith(join(m.from, n) + "/"));       // not into itself
+  if (!names.length) return;
+  if (folder === m.from) { toast("That is already the folder", true); return; }
+  let ok = 0;
+  for (const n of names) { if (await act("/api/rename", { from: join(m.from, n), to: join(folder, n) })) ok++; else break; }
+  if (ok) toast("Moved " + (ok === 1 ? names[0] : ok + " files") + " to " + (folder.split("/").filter(Boolean).pop() || "/"));
+  go(cwd);
+}
+function dropTarget(el, folder) {
+  el.ondragover = (ev) => { if (!isMove(ev)) return; ev.preventDefault(); ev.stopPropagation(); ev.dataTransfer.dropEffect = "move"; el.classList.add("dropok"); };
+  el.ondragleave = () => el.classList.remove("dropok");
+  el.ondrop = (ev) => { if (!isMove(ev)) return; ev.preventDefault(); ev.stopPropagation(); el.classList.remove("dropok"); moveInto(folder); };
+}
+
 function crumbs() {
   const c = $("crumbs"); c.innerHTML = "";
   const parts = cwd.split("/").filter(Boolean);
-  const root = document.createElement("a"); root.textContent = (dev ? dev.name : "") + " /"; root.onclick = () => go("/"); c.appendChild(root);
+  const root = document.createElement("a"); root.textContent = (dev ? dev.name : "") + " /"; root.onclick = () => go("/"); dropTarget(root, "/"); c.appendChild(root);
   let acc = "";
-  for (const p of parts) { acc += "/" + p; const here = acc; const a = document.createElement("a"); a.textContent = " " + p + " /"; a.onclick = () => go(here); c.appendChild(a); }
+  for (const p of parts) { acc += "/" + p; const here = acc; const a = document.createElement("a"); a.textContent = " " + p + " /"; a.onclick = () => go(here); dropTarget(a, here); c.appendChild(a); }
 }
 
 function render() {
@@ -170,11 +196,22 @@ function render() {
   if (!dev) { list.innerHTML = '<div id="nodev">Plug in a phone.<br>iPhones need a jailbreak with OpenSSH. Android phones need USB debugging, and root for most folders.</div>'; return; }
   if (!entries.length) { list.innerHTML = '<div id="empty">This folder is empty.<br>Drop files here to copy them to the phone.</div>'; return; }
   const t = document.createElement("table");
-  t.innerHTML = "<tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr>";
+  t.innerHTML = "<tr><th></th><th>Name</th><th>Size</th><th>Modified</th><th></th></tr>";
   for (const e of entries) {
     const tr = document.createElement("tr");
     const isDir = e.type === "d";
-    tr.innerHTML = `<td class="name">${isDir ? "&#128193; " : "&#128196; "}${esc(e.name)}${e.protected ? ' <span class="lock" title="System or app file: protected from changes here">&#128274;</span>' : ""}</td><td class="num">${isDir ? "" : size(e.size)}</td><td class="num">${when(e.mtime)}</td><td class="acts"></td>`;
+    tr.innerHTML = `<td class="pick">${e.protected ? "" : `<input type="checkbox" class="pick" data-name="${esc(e.name)}" title="Tick to move several files together">`}</td><td class="name">${isDir ? "&#128193; " : "&#128196; "}${esc(e.name)}${e.protected ? ' <span class="lock" title="System or app file: protected from changes here">&#128274;</span>' : ""}</td><td class="num">${isDir ? "" : size(e.size)}</td><td class="num">${when(e.mtime)}</td><td class="acts"></td>`;
+    if (!e.protected) {
+      tr.draggable = true;
+      tr.ondragstart = (ev) => {
+        const cb = tr.querySelector("input.pick"), t = ticked();
+        moving = { names: cb && cb.checked && t.length ? t : [e.name], from: cwd };
+        ev.dataTransfer.setData(MOVE_TYPE, JSON.stringify(moving)); ev.dataTransfer.setData("text/plain", moving.names.join("\n")); ev.dataTransfer.effectAllowed = "move";
+        tr.classList.add("dragging");
+      };
+      tr.ondragend = () => { tr.classList.remove("dragging"); moving = null; document.querySelectorAll(".dropok").forEach((x) => x.classList.remove("dropok")); };
+    }
+    if (isDir) dropTarget(tr, join(cwd, e.name));
     tr.querySelector(".name").onclick = () => { if (isDir) go(join(cwd, e.name)); else if (/\.(bmp|png|jpe?g|gif)$/i.test(e.name)) preview(e); else download(e); };
     const acts = tr.querySelector(".acts");
     const mk = (label, fn, cls, locked) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; if (locked) { b.disabled = true; b.title = "Protected: system or app file"; } b.onclick = (ev) => { ev.stopPropagation(); fn(); }; acts.appendChild(b); };
@@ -253,11 +290,12 @@ async function readEntry(entry, prefix, out) {
   }
 }
 let dragDepth = 0;
-window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; if (dev) $("drop").style.display = "flex"; });
-window.addEventListener("dragleave", (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; $("drop").style.display = "none"; } });
+window.addEventListener("dragenter", (e) => { e.preventDefault(); if (isMove(e)) return; dragDepth++; if (dev) $("drop").style.display = "flex"; });
+window.addEventListener("dragleave", (e) => { e.preventDefault(); if (isMove(e)) return; if (--dragDepth <= 0) { dragDepth = 0; $("drop").style.display = "none"; } });
 window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", async (e) => {
   e.preventDefault(); dragDepth = 0; $("drop").style.display = "none";
+  if (isMove(e)) { moving = null; return; }                          // a row dropped on nothing: nothing moves
   if (!dev) { toast("Pick a phone first", true); return; }
   const out = [], items = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
   if (items.length) for (const en of items) await readEntry(en, "", out);
