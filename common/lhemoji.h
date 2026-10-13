@@ -1,14 +1,17 @@
 // lhemoji.h - the emoji of the Longhouse app: 12 small pixel pictures, and the text work around them.
-// The font is ASCII only, so an emoji in a message becomes a marker byte (1 to 12) followed by a space; the drawing code puts the picture
+// The font is ASCII only, so an emoji in a message becomes a marker byte (LHE_M0 + the number of the picture) followed by a space; the drawing code puts the picture
 // over those two character cells. Emoji that are not in the set stay "?". To type one, the picker puts a short code such as :heart: into
 // the text, and the code becomes the real emoji when the message is sent. The first six are the six reactions of Longhouse, in its order.
 #ifndef LHEMOJI_H
 #define LHEMOJI_H
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "draw.h"
 
 #define LHE_N 12
+#define LHE_M0 16                                                            // the marker of the emoji with colour picture number e is LHE_M0 + e (never a tab, newline or carriage return)
 #define LHE_REACT 6
 
 typedef struct {
@@ -46,17 +49,108 @@ static int lhe_match(const unsigned char *s, int *len) {
     return -1;
 }
 
-// A message body from the server: emoji we know become a marker and a space, carriage returns go, tabs become spaces, the rest that is not ASCII is "?".
-static void lhe_clean_body(char *s) {
+// ---- every other emoji: drawn from a monochrome emoji font (Noto Emoji, tools/emoji/, installed as emoji.ttf in the data folder of the app) in the
+// colour of the text. The text of a message gets a marker (LHE_MARK) and a space for each of them, and the code point goes into a list of the message.
+#ifdef STB_TRUETYPE_IMPLEMENTATION
+#define LHE_FONT 1
+static unsigned char *lhe_fd; static stbtt_fontinfo lhe_fi; static int lhe_fok;
+static int lhe_font_open(const char *path) {
+    if (lhe_fok) return 0;
+    FILE *f = fopen(path, "rb"); if (!f) return -1;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    if (n < 1000 || n > (8L << 20)) { fclose(f); return -1; }
+    lhe_fd = (unsigned char *)malloc((size_t)n);
+    if (!lhe_fd || fread(lhe_fd, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(lhe_fd); lhe_fd = NULL; return -1; }
+    fclose(f);
+    if (!stbtt_InitFont(&lhe_fi, lhe_fd, stbtt_GetFontOffsetForIndex(lhe_fd, 0))) { free(lhe_fd); lhe_fd = NULL; return -1; }
+    lhe_fok = 1; return 0;
+}
+static int lhe_has_glyph(int cp) { return lhe_fok && stbtt_FindGlyphIndex(&lhe_fi, cp) != 0; }
+typedef struct { int cp, w, h; unsigned char *bm; } LheGlyph;
+static LheGlyph lhe_cache[128]; static int lhe_ncache;
+static LheGlyph *lhe_glyph(int cp, int px) {
+    for (int i = 0; i < lhe_ncache; i++) if (lhe_cache[i].cp == cp) return &lhe_cache[i];
+    LheGlyph *g = &lhe_cache[lhe_ncache < 128 ? lhe_ncache++ : (rand() & 127)];
+    if (g->bm) stbtt_FreeBitmap(g->bm, NULL);
+    int xo, yo; g->cp = cp; g->bm = stbtt_GetCodepointBitmap(&lhe_fi, 0, stbtt_ScaleForMappingEmToPixels(&lhe_fi, (float)px), cp, &g->w, &g->h, &xo, &yo);
+    return g;
+}
+// Draw the glyph of the code point centered in a box of size by size pixels at x, y, in the colour rgb (mapped by the theme like text).
+static void lhe_draw_cp(Surf *s, int cp, int x, int y, int size, uint32_t rgb) {
+    if (!lhe_fok) return;
+    LheGlyph *g = lhe_glyph(cp, size * 100 / 105);
+    { static int dbg = -1; if (dbg < 0) dbg = getenv("LHE_DEBUG") != NULL; if (dbg) fprintf(stderr, "draw U+%X at %d,%d size %d bitmap %p %dx%d\n", cp, x, y, size, (void *)g->bm, g->w, g->h); }
+    if (!g->bm) return;
+    uint32_t c = s->theme ? draw_theme_color(s->theme, rgb) : rgb;
+    int cr = (c >> 16) & 255, cg = (c >> 8) & 255, cb = c & 255;
+    int ox = x + (size - g->w) / 2, oy = y + (size - g->h) / 2;
+    for (int yy = 0; yy < g->h; yy++) {
+        int py = oy + yy; if (py < 0 || py >= s->h) continue;
+        for (int xx = 0; xx < g->w; xx++) {
+            int a = g->bm[yy * g->w + xx], px = ox + xx; if (!a || px < 0 || px >= s->w) continue;
+            uint32_t *d = &s->px[(size_t)py * s->stride + px];
+            int dr = (*d >> s->rs) & 255, dg = (*d >> s->gs) & 255, db = (*d >> s->bs) & 255;
+            *d = (uint32_t)((dr * (255 - a) + cr * a) / 255) << s->rs | (uint32_t)((dg * (255 - a) + cg * a) / 255) << s->gs |
+                 (uint32_t)((db * (255 - a) + cb * a) / 255) << s->bs | s->alpha;
+        }
+    }
+}
+#else
+#define LHE_FONT 0
+static int lhe_has_glyph(int cp) { (void)cp; return 0; }
+#endif
+
+#define LHE_MAXEMO 24
+#define LHE_MARK (LHE_M0 + LHE_N)                                           // the marker byte of an emoji drawn from the font
+
+// The code point at r (UTF-8), and its length in bytes. A bad byte gives 0xFFFD and length 1.
+static int lhe_cp(const unsigned char *r, int *len) {
+    int c = r[0];
+    if (c < 0x80) { *len = 1; return c; }
+    if ((c & 0xE0) == 0xC0 && (r[1] & 0xC0) == 0x80) { *len = 2; return (c & 31) << 6 | (r[1] & 63); }
+    if ((c & 0xF0) == 0xE0 && (r[1] & 0xC0) == 0x80 && (r[2] & 0xC0) == 0x80) { *len = 3; return (c & 15) << 12 | (r[1] & 63) << 6 | (r[2] & 63); }
+    if ((c & 0xF8) == 0xF0 && (r[1] & 0xC0) == 0x80 && (r[2] & 0xC0) == 0x80 && (r[3] & 0xC0) == 0x80) { *len = 4; return (c & 7) << 18 | (r[1] & 63) << 12 | (r[2] & 63) << 6 | (r[3] & 63); }
+    *len = 1; return 0xFFFD;
+}
+static int lhe_is_emoji(int cp) {
+    return (cp >= 0x1F000 && cp <= 0x1FAFF) || (cp >= 0x2600 && cp <= 0x27BF) || (cp >= 0x2B00 && cp <= 0x2BFF) || (cp >= 0x2300 && cp <= 0x23FF) ||
+           (cp >= 0x2190 && cp <= 0x21FF) || (cp >= 0x25A0 && cp <= 0x25FF) || cp == 0xA9 || cp == 0xAE || cp == 0x2122 || cp == 0x203C || cp == 0x2049 ||
+           cp == 0x3030 || cp == 0x303D || cp == 0x3297 || cp == 0x3299 || (cp >= 0x2934 && cp <= 0x2935) || cp == 0x2B50;
+}
+static int lhe_is_joiner_part(int cp) {                                       // follows an emoji and is part of the same picture
+    return cp == 0xFE0F || cp == 0xFE0E || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xE0020 && cp <= 0xE007F);
+}
+
+// A message body from the server. ASCII stays (a carriage return goes, a tab becomes a space). The 12 emoji with colour pictures become a marker (LHE_M0 + number)
+// and a space. Any other emoji that the emoji font has becomes LHE_MARK and a space, and its code point goes into cps (up to maxcp). The rest is "?".
+// A picture made of several (a family, a flag, a skin tone, a joined sequence) is drawn as its first part.
+static void lhe_clean_body(char *s, int *cps, int *ncp, int maxcp) {
     unsigned char *r = (unsigned char *)s, *w = r;
+    int n = 0; static int dbg = -1; if (dbg < 0) dbg = getenv("LHE_DEBUG") != NULL;
     while (*r) {
         if (*r < 0x80) { if (*r == '\r') { r++; continue; } *w++ = *r == '\t' ? ' ' : *r; r++; continue; }
         int len, e = lhe_match(r, &len);
-        if (e >= 0) { *w++ = (unsigned char)(e + 1); *w++ = ' '; r += len; continue; }
-        if (r[0] == 0xEF && r[1] == 0xB8 && r[2] == 0x8F) { r += 3; continue; }                 // a lone variation selector
-        *w++ = '?'; r++; while ((*r & 0xC0) == 0x80) r++;
+        if (e >= 0) { *w++ = (unsigned char)(LHE_M0 + e); *w++ = ' '; r += len; continue; }
+        int cp = lhe_cp(r, &len);
+        if (dbg) fprintf(stderr, "emoji? U+%X emoji=%d font=%d glyph=%d n=%d\n", cp, lhe_is_emoji(cp), LHE_FONT ? lhe_has_glyph(cp) : -1, lhe_has_glyph(cp), n);
+        if (cp == 0xFE0F || cp == 0x200D) { r += len; continue; }                 // a lone variation selector or joiner
+        if (lhe_is_emoji(cp) && n < maxcp && lhe_has_glyph(cp)) {
+            if (cps) cps[n] = cp; n++;
+            *w++ = LHE_MARK; *w++ = ' '; r += len;
+            int more = 1;                                                         // the parts that belong to it
+            while (more && *r >= 0x80) {
+                int l2, c2 = lhe_cp(r, &l2);
+                if (lhe_is_joiner_part(c2)) r += l2;
+                else if (c2 == 0x200D) { r += l2; if (*r >= 0x80) { int l3; lhe_cp(r, &l3); r += l3; } }     // joined with the next picture: leave that out
+                else if (cp >= 0x1F1E6 && cp <= 0x1F1FF && c2 >= 0x1F1E6 && c2 <= 0x1F1FF) { r += l2; cp = 0; }      // the second half of a flag
+                else more = 0;
+            }
+            continue;
+        }
+        *w++ = '?'; r += len;
     }
     *w = 0;
+    if (ncp) *ncp = n;
 }
 
 // A text to send, as the inside of a JSON string: quotes and newlines escaped, :codes: become the emoji, other non-ASCII becomes a space.
@@ -82,7 +176,7 @@ static uint32_t lhe_color(char c) {
     switch (c) {
         case 'Y': return 0xFFD23C; case 'K': return 0x3A2A10; case 'W': return 0xFFFFFF; case 'R': return 0xE03050; case 'C': return 0x5FD0FF;
         case 'S': return 0xFFC266; case 'B': return 0x3A6FD8; case 'G': return 0x40B860; case 'O': return 0xE08A1E; case 'P': return 0xA050D0;
-        case 'D': return 0xB8860B; default: return 0;
+        case 'D': return 0x9A6B00; default: return 0;
     }
 }
 static const char *LHE_BASE[12] = {
@@ -107,9 +201,11 @@ static const char *LHE_FACE_FEAT[8] = {
 };
 
 // Draw emoji number idx (0 to 11) with its top left corner at x, y; every picture pixel is sc by sc screen pixels.
-static void lhe_draw(Surf *s, int idx, int x, int y, int sc) {
+static void lhe_draw(Surf *s0, int idx, int x, int y, int sc) {
+    Surf raw = *s0; raw.theme = 0; Surf *s = &raw;                          // the pictures keep their own colours in every theme
     char grid[12][13];
-    if (idx == 0 || idx == 1 || idx == 5 || idx == 11) {
+    int face = !(idx == 0 || idx == 1 || idx == 5 || idx == 11);
+    if (!face) {
         int k = idx == 0 ? 0 : idx == 1 ? 1 : idx == 5 ? 2 : 3;
         for (int r = 0; r < 12; r++) memcpy(grid[r], LHE_SPRITE[k][r], 13);
     } else {
@@ -118,6 +214,11 @@ static void lhe_draw(Surf *s, int idx, int x, int y, int sc) {
         for (const char *p = LHE_FACE_FEAT[f]; p[0] && p[1] && p[2]; p += 3) {
             int px = p[0] >= 'a' ? p[0] - 'a' + 10 : p[0] - '0', py = p[1] >= 'a' ? p[1] - 'a' + 10 : p[1] - '0';
             if (px >= 0 && px < 12 && py >= 0 && py < 12) grid[py][px] = p[2];
+        }
+        char edge[12][13]; memcpy(edge, grid, sizeof edge);                 // a dark outline round the face, so that it shows on a pale background
+        for (int r = 0; r < 12; r++) for (int c = 0; c < 12; c++) {
+            if (edge[r][c] != 'Y') continue;
+            if (r == 0 || c == 0 || r == 11 || c == 11 || edge[r - 1][c] == '.' || edge[r + 1][c] == '.' || edge[r][c - 1] == '.' || edge[r][c + 1] == '.') grid[r][c] = 'D';
         }
     }
     for (int r = 0; r < 12; r++) for (int c = 0; c < 12; c++) {

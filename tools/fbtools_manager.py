@@ -33,7 +33,7 @@ APPS = [
     {"id": "pixel", "name": "Pixel", "desc": "Draw pixel art. Saves .pix files and .bmp pictures.", "bin": "pixel", "data": ["data/pixel"]},
     {"id": "fonts", "name": "Reading fonts", "desc": "OpenDyslexic, Atkinson Hyperlegible, and Lexend for Reader and Bible. Choose one in the momPKT settings.", "bin": None, "data": ["data/fonts"], "extra": ["data/fonts/OpenDyslexic.otf", "data/fonts/AtkinsonHyperlegible.ttf", "data/fonts/Lexend.ttf"]},
     {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic, and project files in Lua, JavaScript, MoonScript, Fennel, Wren, Scheme, Python, Janet, and Squirrel). Put carts in the carts folder. Comes with a beat box and a sound test.", "bin": "tic80", "data": ["carts"], "extra": ["carts/beatbox.lua", "carts/soundtest.lua"], "android_extra": ["musichelper.jar"], "only": ["ios7", "android"]},
-    {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
+    {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat, with replies, reactions and emoji. Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"], "extra_optional": ["data/longhouse/emoji.ttf"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
     {"id": "console", "name": "Console", "desc": "A text console demo.", "bin": "condemo", "only": ["android"]},
 ]
@@ -209,7 +209,8 @@ def problems_for(dev, plat, m, force=False):
         elif remote in want and h != want[remote]: bad.append((rel, remote, md, "changed (%d bytes, expected %d)" % (h, want[remote])))
         elif remote not in want and plat != "ios12" and h != os.path.getsize(src): bad.append((rel, remote, md, "changed"))
         elif force: old.append((rel, remote, md, "reinstall requested"))
-        elif remote in pwant and os.path.getsize(src) != pwant[remote]: old.append((rel, remote, md, "a newer build is in this app"))
+        elif (remote in pwant and os.path.getsize(src) != pwant[remote]) or (plat != "ios12" and h != os.path.getsize(src)):
+            old.append((rel, remote, md, "a newer build is in this app"))          # (no record of the size of the last copy: the size of the file on the phone decides)
     return bad, old
 
 
@@ -573,6 +574,26 @@ def do_to_android(dev, plat, log):
         log("FB Tools is not running. Android is already on screen.")
 
 
+ANDROID_LOCK = "hide_android"          # a file in the base folder: the picker then has no Android Settings button and no Restart
+
+
+def android_button_shown(dev, plat):
+    b = PLATFORMS[plat]["base"]
+    out = dev.sh("if [ -e %s/%s ]; then echo hidden; else echo shown; fi" % (b, ANDROID_LOCK), timeout=15).stdout.decode(errors="replace")
+    return "hidden" not in out           # (the error text of ls goes to stderr, which is not read here, so ls cannot be used to ask)
+
+
+def do_android_button(dev, plat, show, log):
+    """Show or hide the way out to Android in the picker of this phone. Hidden: no Android Settings button in the settings and no Restart in the
+    power menu. Only this Mac can turn it back on (from Phone Files). It does not stop someone who holds the power button or removes the battery."""
+    if plat != "android": raise FBToolsError("This is for Android phones only.")
+    b = PLATFORMS[plat]["base"]
+    if hasattr(dev, "ensure_root"): dev.ensure_root()
+    if show: dev.sh(dev.rmf("%s/%s" % (b, ANDROID_LOCK)), timeout=15)
+    else: dev.sh("echo hidden > %s/%s; chmod 644 %s/%s" % (b, ANDROID_LOCK, b, ANDROID_LOCK), timeout=15)
+    log("The Android Settings button is now %s on this phone. The picker notices it within a few seconds." % ("shown" if show else "hidden"))
+
+
 # ---------------------------------------------------------------- status
 
 def status(dev):
@@ -587,7 +608,7 @@ def status(dev):
     for a in apps_for(plat):
         apps.append({"id": a["id"], "name": a["name"], "desc": a["desc"], "available": app_available(plat, a),
                      "installed": bool(m and a["id"] in m.get("apps", []))})
-    out = {"supported": True, "platform": plat, "label": info["label"], "modes": info["modes"], "installed": bool(m),
+    out = {"supported": True, "platform": plat, "android_button": android_button_shown(dev, plat) if plat == "android" else None, "label": info["label"], "modes": info["modes"], "installed": bool(m),
            "mode": m.get("mode") if m else None, "apps": apps, "payload_ok": os.path.exists(pl(plat, "bin/fblauncher")), "problems": []}
     if m:
         bad, old = problems_for(dev, plat, m)

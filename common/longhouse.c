@@ -292,7 +292,7 @@ static int http_do(const char *method, const char *path, const char *body, char 
 
 typedef struct { char id[96]; char kind[8]; char title[100]; char members[16][96]; int nmem; } Conv;
 typedef struct { char id[96]; char sender[96]; char *body; char when[24]; char iso[32]; int deleted, edited, picture, has_thumb;
-                 char reply_to[96]; unsigned char react[LHE_REACT]; int mine; } Msg;      // reply_to: the id this answers; react: how many of each reaction; mine: my reaction, or -1
+                 char reply_to[96]; unsigned char react[LHE_REACT]; int mine; int emo[LHE_MAXEMO], nemo; } Msg;      // reply_to: the id this answers; react: how many of each reaction; mine: my reaction, or -1
 #define MAXCONV 64
 #define MAXMSG 200
 static Conv g_conv[MAXCONV]; static int g_nconv;
@@ -419,7 +419,9 @@ static int fetch_messages(const char *conv_id) {
             JN *k = media && media->t == J_OBJ ? jget(media, "kind") : NULL;
             strcat(o->body, bl ? "\n" : ""); strcat(o->body, k && !strcmp(jstr(k), "video") ? "[video]" : (k && !strcmp(jstr(k), "file") ? "[file]" : "[picture]"));
         }
-        lhe_clean_body(o->body);
+        if (getenv("LHE_DEBUG")) { int na = 0; for (const unsigned char *q = (const unsigned char *)o->body; *q; q++) if (*q >= 0x80) na++;
+            if (na) { fprintf(stderr, "msg %s %s non-ascii bytes:", o->when, name_of(o->sender)); for (const unsigned char *q = (const unsigned char *)o->body; *q; q++) if (*q >= 0x80) fprintf(stderr, " %02X", *q); fputc(10, stderr); } }
+        lhe_clean_body(o->body, o->emo, &o->nemo, LHE_MAXEMO);
         JN *rt = jget(m, "replyTo"); snprintf(o->reply_to, sizeof o->reply_to, "%s", rt && rt->t == J_STR ? rt->s : "");
         memset(o->react, 0, sizeof o->react); o->mine = -1;
         JN *rx = jget(m, "reactions");
@@ -624,22 +626,24 @@ static int find_msg(const char *id) { for (int i = 0; i < g_nmsg; i++) if (!strc
 static int msg_rq(const Msg *m) { return m->reply_to[0] && !m->deleted ? 20 : 0; }               // height of the quote line of a reply
 static int msg_rc(const Msg *m) { if (m->deleted) return 0; for (int k = 0; k < LHE_REACT; k++) if (m->react[k]) return 30; return 0; }    // height of the row of reactions
 
-// Text with emoji: the marker bytes 1 to 12 (and the space after each) become pictures. Everything else is drawn as text.
-static void draw_rich(Ui *u, int x, int y, int sc, const char *line, uint32_t col) {
-    char seg[300]; int n = 0;
+// Text with emoji: the marker bytes LHE_M0 to LHE_M0 + 11 (and the space after each) become coloured pictures, the marker LHE_MARK a glyph of the emoji font (the next
+// code point of emo, in the colour of the text). Everything else is drawn as text.
+static void draw_rich(Ui *u, int x, int y, int sc, const char *line, uint32_t col, const int *emo, int nemo) {
+    char seg[300]; int n = 0, ei = 0;
     for (const char *p = line;; p++) {
         unsigned char c = (unsigned char)*p;
-        if (c == 0 || (c >= 1 && c <= LHE_N)) {
+        if (c == 0 || (c >= LHE_M0 && c < LHE_M0 + LHE_N) || c == LHE_MARK) {
             seg[n] = 0; if (n) ui_label(u, x, y, sc, seg, col);
             x += n * 8 * sc; n = 0;
             if (c == 0) break;
-            lhe_draw(u->s, c - 1, x + 2 * sc, y + 2 * sc, sc);                    // 12 by 12 pixels of sc: a bit smaller than the two cells it covers
+            if (c == LHE_MARK) { if (ei < nemo) { lhe_draw_cp(u->s, emo[ei], x, y, 16 * sc, col); } else ui_label(u, x, y, sc, "?", col); ei++; }
+            else lhe_draw(u->s, c - LHE_M0, x + 2 * sc, y + 2 * sc, sc);              // 12 by 12 pixels of sc: a bit smaller than the two cells it covers
             x += 8 * sc;
         } else if (n < 299) seg[n++] = (char)c;
     }
 }
 static void plain_text(char *dst, size_t n, const char *src) {                    // the same text with the markers as "*", for a short quote
-    size_t o = 0; for (; *src && o + 1 < n; src++) { unsigned char c = (unsigned char)*src; if (c >= 1 && c <= LHE_N) { dst[o++] = '*'; if (src[1] == ' ') src++; } else if (c == '\n') dst[o++] = ' '; else dst[o++] = (char)c; }
+    size_t o = 0; for (; *src && o + 1 < n; src++) { unsigned char c = (unsigned char)*src; if ((c >= LHE_M0 && c < LHE_M0 + LHE_N) || c == LHE_MARK) { dst[o++] = '*'; if (src[1] == ' ') src++; } else if (c == '\n') dst[o++] = ' '; else dst[o++] = (char)c; }
     dst[o] = 0;
 }
 
@@ -648,12 +652,30 @@ enum { V_LIST, V_CHAT };
 int main(int argc, char **argv) {
     double seconds = argc > 1 ? atof(argv[1]) : 86400;
     char dir[256] = DEFAULT_DIR; if (argc > 2) snprintf(dir, sizeof dir, "%s", argv[2]);
+    if (argc > 4 && !strcmp(argv[3], "dump")) {          // for tests: fetch the chats whose title has argv[4] in it and print the bytes above 127 of the last messages. No screen.
+        signal(SIGPIPE, SIG_IGN); load_config(dir); g_exp = jwt_exp(g_cfg.token);
+        if (!g_have_cfg || fetch_conversations() != 0) { fprintf(stderr, "no chats: %s\n", g_err); return 1; }
+        for (int c = 0; c < g_nconv; c++) {
+            if (!strstr(g_conv[c].title, argv[4])) continue;
+            if (fetch_messages(g_conv[c].id) != 0) continue;
+            printf("chat \"%s\": %d messages\n", g_conv[c].title, g_nmsg);
+            for (int i = g_nmsg > 8 ? g_nmsg - 8 : 0; i < g_nmsg; i++) {
+                printf("%s len=%d nemo=%d nl=%d bytes:", g_msg[i].when, (int)strlen(g_msg[i].body), g_msg[i].nemo, 0);
+                for (const unsigned char *q = (const unsigned char *)g_msg[i].body; *q; q++) { if (*q < 32 || *q >= 127) printf(" %02X", *q); else putchar('.'); }
+                printf("\n");
+            }
+        }
+        return 0;
+    }
     PlatInfo pi;
     if (plat_init(&pi)) return 1;
     if (plat_touch_init(&pi)) return 1;
     int W = pi.w, H = pi.h;
     snprintf(g_dir, sizeof g_dir, "%s", dir);
     load_config(dir); g_exp = jwt_exp(g_cfg.token);
+#if LHE_FONT
+    { char fp[300]; snprintf(fp, sizeof fp, "%s/emoji.ttf", dir); if (lhe_font_open(fp) < 0) lhe_font_open(TTF_FONT_DIR "/NotoEmoji.ttf"); }       // the emoji font; without it other emoji stay "?"
+#endif
     signal(SIGPIPE, SIG_IGN);
     if (g_have_cfg && g_cfg.sig_host[0]) { pthread_t bt; if (pthread_create(&bt, NULL, boot_worker, NULL) == 0) pthread_detach(bt); }
     if (g_have_cfg && g_cfg.sig_host[0] && g_cfg.home_id[0]) { pthread_t th; if (pthread_create(&th, NULL, pic_worker, NULL) == 0) pthread_detach(th); }
@@ -740,7 +762,7 @@ int main(int argc, char **argv) {
             static int st[64], ln[64];
             for (int i = 0; i < g_nmsg; i++) total += LH + msg_rq(&g_msg[i]) + wrap_lines(g_msg[i].body, cols, st, ln, 64) * LH + 12 + pic_extra(&g_msg[i]) + msg_rc(&g_msg[i]);
             int maxs = total - mh; if (maxs < 0) maxs = 0;
-            if (follow && chat_sc.pos > maxs) chat_sc.pos = maxs;
+            if (follow) chat_sc.pos = maxs;                                          // following: stay at the end, also when the area gets smaller (the picker, the action bar)
             int before = chat_sc.pos;
             ui_scroll(&u, &chat_sc, 0, my, W, mh, total);
             if (chat_sc.pos < before - 4) follow = 0; else if (chat_sc.pos >= maxs) follow = 1;
@@ -763,8 +785,8 @@ int main(int argc, char **argv) {
                         u.tapped = 0; dirty = 3;
                     }
                     char head[160]; snprintf(head, sizeof head, "%s  %s%s", name_of(g_msg[i].sender), g_msg[i].when, g_msg[i].edited ? "  (edited)" : "");
-                    if (y + 4 >= my && y + 4 + 16 <= my + mh) ui_label(&u, 12, y + 4, 1, head, mine ? 0x77DD99 : 0x77BBFF);
-                    if (rq && y + 22 >= my && y + 22 + 16 <= my + mh) {                                 // the line it answers
+                    if (y + 4 + 16 > my && y + 4 < my + mh) ui_label(&u, 12, y + 4, 1, head, mine ? 0x77DD99 : 0x77BBFF);
+                    if (rq && y + 22 + 16 > my && y + 22 < my + mh) {                                 // the line it answers
                         int j = find_msg(g_msg[i].reply_to); char q[140], qt[100], qb[200];
                         if (j >= 0) { plain_text(qt, sizeof qt, g_msg[j].body); snprintf(q, sizeof q, "%s: %s", name_of(g_msg[j].sender), qt); }
                         else snprintf(q, sizeof q, "an earlier message");
@@ -774,7 +796,10 @@ int main(int argc, char **argv) {
                     for (int l = 0; l < nl; l++) {
                         char line[300]; int ll = ln[l] < 299 ? ln[l] : 299; memcpy(line, g_msg[i].body + st[l], (size_t)ll); line[ll] = 0;
                         int ly2 = y + LH - 4 + rq + l * LH;
-                        if (ly2 >= my && ly2 + LH <= my + mh) draw_rich(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8);       // whole lines only
+                        if (ly2 + LH > my && ly2 < my + mh) {                                           // a line that is partly in view is drawn too: the header and the panels below are drawn over what sticks out
+                            int before = 0; for (int k = 0; k < st[l]; k++) if ((unsigned char)g_msg[i].body[k] == LHE_MARK) before++;          // emoji of this message on earlier lines
+                            draw_rich(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8, g_msg[i].emo + (before < g_msg[i].nemo ? before : g_msg[i].nemo), g_msg[i].nemo - (before < g_msg[i].nemo ? before : g_msg[i].nemo));
+                        }       // whole lines only
                     }
                     if (ex) {
                         int iy2 = y + LH - 4 + rq + nl * LH + 4;
@@ -785,7 +810,7 @@ int main(int argc, char **argv) {
                     }
                     if (rc) {                                                                          // the reactions: a picture and a count each
                         int cx = 12, cy = y + LH - 4 + rq + nl * LH + ex + 2;
-                        if (cy >= my && cy + 26 <= my + mh) for (int k = 0; k < LHE_REACT; k++) if (g_msg[i].react[k]) {
+                        if (cy + 26 > my && cy < my + mh) for (int k = 0; k < LHE_REACT; k++) if (g_msg[i].react[k]) {
                             char cnt[8]; snprintf(cnt, sizeof cnt, "%d", g_msg[i].react[k]);
                             int cw = 8 + 24 + 6 + (int)strlen(cnt) * 8 + 8;
                             draw_rect(&s, cx, cy, cw, 26, g_msg[i].mine == k ? 0x4C8DDB : 0x2A3344);
@@ -799,6 +824,12 @@ int main(int argc, char **argv) {
             }
             if (!g_nmsg) ui_label(&u, 14, my + 20, 2, g_have_cfg ? "No messages yet." : "No session.", 0x8899AA);
             draw_rect(&s, 0, my - 1, W, 1, 0x26303E);
+            {   // the header again, over what the messages draw above their area (the buttons here are for looks only: the taps were handled above)
+                int tp = u.tapped; u.tapped = 0;
+                draw_rect(&s, 0, 0, W, BAR, 0x26303E);
+                ui_button(&u, 8, 8, 112, BAR - 16, "BACK", 0x34608F); ui_label(&u, 134, 16, 2, title, 0xFFFFFF); ui_button(&u, W - 120, 8, 112, BAR - 16, "SYNC", 0x34608F);
+                u.tapped = tp;
+            }
 
             // below the messages: what to do with the picked message, the emoji to type, and who the reply goes to
             int by = my + mh;

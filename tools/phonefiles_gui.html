@@ -350,6 +350,7 @@ function renderFbt() {
   h += "</div><h3>Manage</h3><div class='card'>";
   if (!st.installed) h += `<div class="row" style="margin-top:0"><button class="primary" id="b-install" ${st.payload_ok ? "" : "disabled"}>Install FB Tools</button></div>`;
   else h += `<div class="row" style="margin-top:0"><button id="b-start">Start FB Tools now</button><button id="b-android" title="Android phones: end FB Tools and show Android now. The next restart starts FB Tools again.">Back to Android</button><button id="b-clock" title="Android phones: set the phone clock from this Mac">Set phone clock</button><button id="b-repair2">Repair (restore missing files)</button><button id="b-reinstall">Reinstall all files</button><button class="danger" id="b-uninst">Uninstall</button></div>
+    ${st.platform === "android" ? `<label style="display:block;margin-top:10px" title="Off: the picker of this phone has no Android Settings button and no Restart, so the person using it cannot reach Android"><input type="checkbox" id="showand" ${st.android_button ? "checked" : ""}> Show the "Android Settings" button on this phone (off: no way out to Android from the picker)</label>` : ""}
     <label style="display:block;margin-top:10px"><input type="checkbox" id="rmdata"> When I uninstall, also delete my notes, music, and carts</label>`;
   h += `</div><h3>Longhouse chat</h3><div class="card" id="lhcard">Checking this phone...</div>${keepLog || '<div id="joblog"></div>'}`;
   box.innerHTML = h;
@@ -362,6 +363,7 @@ function renderFbt() {
   on("b-start", () => runJob("start", {}));
   on("b-android", () => runJob("android", {}));
   on("b-clock", () => runJob("clock", {}));
+  { const c = $("showand"); if (c) c.onchange = () => runJob("androidbtn", { show: c.checked }); }
   on("b-reinstall", () => { if (confirm("Copy every FB Tools program to the phone again? Your notes, music, and other data are not touched.")) runJob("repair", { force: true }); });
   on("b-uninst", () => { if (confirm("Remove FB Tools from this phone?" + ($("rmdata").checked ? "\n\nThis also DELETES your notes, music, and carts." : "\n\nYour notes, music, and carts stay."))) runJob("uninstall", { remove_data: $("rmdata").checked }); });
   box.querySelectorAll("[data-app]").forEach((b) => b.onclick = () => runJob("app", { id: b.dataset.app, action: b.dataset.act }));

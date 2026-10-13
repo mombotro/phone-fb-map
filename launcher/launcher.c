@@ -201,7 +201,7 @@ int main(int argc, char **argv) {
     // portrait or landscape, and (outside boot mode) a button for Android's own Settings.
     int settings = 0, wifi = -1, bt = -1, vol = 100, bright = 100, drag = 0, nfont = 0, curfont = 0, fsize = 90;
     char fonts[12][64];                                                          // reading font files; index 0 of the cycle is the chunky font     // drag: 0 none, 1 volume slider, 2 brightness slider
-    const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = H < 700 ? 62 : 84, sp_rows = kiosk ? 7 : 8;
+    const int SP_W = W - 2 * GAP < 540 ? W - 2 * GAP : 540, SP_X = GAP, SP_Y = 92, SP_ROW = H < 700 ? 62 : 84;
     const int SL_X0 = SP_X + 190, SL_X1 = SP_X + SP_W - 112;                      // the slider tracks
 #endif
     double bat_until = 0;
@@ -210,7 +210,13 @@ int main(int argc, char **argv) {
 #endif                                                       // while set, a box shows the exact battery percentage
     const int BAT_X = W - GAP - 126 - 70, PW_X = BAT_X - 76, PW_Y = 14, PW = 64;                    // the power button in the title bar, next to the time
     const int MENU_W = W - 2 * GAP < 380 ? W - 2 * GAP : 380, MENU_X = W - GAP - MENU_W, MENU_Y = 92, MENU_ROW = 90;
-    const int menu_rows = kiosk ? 1 : 2;                                         // Restart ends the picker, so it is not offered at boot
+    // locked: no way out to Android from the picker: no Android Settings button, no Restart (it ends the picker). That is so in kiosk mode (boot), and
+    // when the file hide_android is in the data folder (Phone Files writes it: the box "Show the Android Settings button" off). The file is looked at every 2 s.
+    int locked = kiosk;
+    int menu_rows = locked ? 1 : 2;
+#ifndef __APPLE__
+    int sp_rows = locked ? 7 : 8;
+#endif
     double t0 = now();
 
     int prev = 0, down_x = 0, down_y = 0, last_y = 0, moved = 0;
@@ -220,6 +226,10 @@ int main(int argc, char **argv) {
     while (now() - t0 < seconds) {
         PlatTouch tc[10];
         int n = plat_touch_poll(tc, 10);
+#ifndef __APPLE__
+        { static double nx = 0;
+          if (now() >= nx) { nx = now() + 2; int l = kiosk || access(BASE "/hide_android", F_OK) == 0; if (l != locked) { locked = l; sp_rows = l ? 7 : 8; menu_rows = l ? 1 : 2; menu = 0; dirty = 3; } } }
+#endif
 #ifndef __APPLE__
         if (plat_volume_event() && !drag) { vol = plat_volume_get(); dirty = 3; }          // a volume key moved it
         if (now() >= next_mus) {
@@ -264,7 +274,7 @@ int main(int argc, char **argv) {
         if (tap && state == S_MAIN && menu) {
             if (tx >= MENU_X && tx < MENU_X + MENU_W && ty >= MENU_Y && ty < MENU_Y + menu_rows * MENU_ROW) {
                 int row = (ty - MENU_Y) / MENU_ROW;
-                if (!kiosk && row == 0) quit = 1;                               // Restart
+                if (!locked && row == 0) quit = 1;                              // Restart
                 else state = S_SHUT;                                            // Shut down asks again on its own screen
             }
             menu = 0; dirty = 3;
@@ -290,7 +300,7 @@ int main(int argc, char **argv) {
                 } else if (row == 6) {                                            // colour theme: the next one (the left part: the one before)
                     theme_cur = (theme_cur + (tx < SP_X + SP_W / 2 ? THEME_N - 1 : 1)) % THEME_N;
                     FILE *tf = fopen(BASE "/theme", "w"); if (tf) { fputs(THEMES[theme_cur].name, tf); fputc('\n', tf); fclose(tf); chmod(BASE "/theme", 0666); }
-                } else if (row == 7 && !kiosk) {                                  // leave the picker and open the Android screen
+                } else if (row == 7 && !locked) {                                  // leave the picker and open the Android screen
                     FILE *af = fopen("/data/local/tmp/after_start", "w");
                     if (af) { fputs("android.settings.SETTINGS", af); fclose(af); quit = 1; }
                 }
@@ -504,7 +514,7 @@ int main(int argc, char **argv) {
                         }
                     }
                     // row 7: Android's own Settings app, for networks and Bluetooth (not in boot mode, where there is no way out)
-                    if (!kiosk) {
+                    if (!locked) {
                         int y3 = ty0 + 7 * SP_ROW, bx = SP_X + 12, by = y3 + 12, bw = SP_W - 24, bh = SP_ROW - 24;
                         draw_rect(&s, bx, by, bw, bh, edge); draw_rect(&s, bx + 4, by + 4, bw - 8, bh - 8, inner);
                         const char *nm = "ANDROID SETTINGS";
@@ -527,7 +537,7 @@ int main(int argc, char **argv) {
                     draw_rect(&s, MENU_X, MENU_Y, MENU_W, menu_rows * MENU_ROW + 8, s.theme ? 0xFFFFFF : 0x9AAABB);
                     draw_rect(&s, MENU_X + 4, MENU_Y + 4, MENU_W - 8, menu_rows * MENU_ROW, s.theme ? 0x000000 : 0x202C3C);
                     for (int r = 0; r < menu_rows; r++) {
-                        const char *name = (!kiosk && r == 0) ? "Restart" : "Shut down";
+                        const char *name = (!locked && r == 0) ? "Restart" : "Shut down";
                         if (r) draw_rect(&s, MENU_X + 4, MENU_Y + 4 + r * MENU_ROW - 2, MENU_W - 8, 4, s.theme ? 0xFFFFFF : 0x9AAABB);
                         draw_text(&s, MENU_X + 24, MENU_Y + 4 + r * MENU_ROW + (MENU_ROW - 48) / 2, 3, name, 0xFFFFFF);
                     }

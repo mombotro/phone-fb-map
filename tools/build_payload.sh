@@ -46,6 +46,8 @@ cp launcher/android_apk/FBTools.apk $P/android/FBTools.apk
 if [ -f tools/bible_asv.txt ]; then      # the Bible text, made by tools/make_bible.py from the asv folder
     for d in ios7 ios12 android; do mkdir -p $P/$d/data/bible; cp tools/bible_asv.txt $P/$d/data/bible/asv.txt; done
 else echo "  no tools/bible_asv.txt: run tools/make_bible.py to add the Bible"; fi
+if [ -f tools/emoji/NotoEmoji.ttf ]; then for d in ios7 ios12 android; do mkdir -p $P/$d/data/longhouse; cp tools/emoji/NotoEmoji.ttf $P/$d/data/longhouse/emoji.ttf; done     # the emoji font of the Longhouse app
+else echo "  no tools/emoji/NotoEmoji.ttf: run tools/fetch_emoji_font.sh so that every emoji shows in Longhouse"; fi
 if [ -f tools/bible_net.txt ]; then for d in ios7 ios12 android; do mkdir -p $P/$d/data/bible; cp tools/bible_net.txt $P/$d/data/bible/net.txt; done; fi       # the NET Bible, from tools/fetch_net_bible.py
 if [ -d tools/fonts ] && ls tools/fonts/* >/dev/null 2>&1; then      # the reading fonts, from tools/fetch_fonts.sh
     for d in ios7 ios12 android; do mkdir -p $P/$d/data/fonts; cp tools/fonts/* $P/$d/data/fonts/; done
