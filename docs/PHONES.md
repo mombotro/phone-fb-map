@@ -128,6 +128,7 @@ The touch panel has portrait axes, and the code handles that. Set `/data/local/t
 | Alarm sound | Works | A looped WAV file, played by the Java helper. |
 | Music: sound | Works | Tested with a test tone. |
 | Home-screen icon | Works | Started from `adb` with `am start`. Nobody tapped it yet. |
+| Boot straight into FB Tools | Works | The boot script `/system/etc/install-recovery-2.sh` is run as root by the `flash_recovery` service through `install-recovery.sh`. `/system` is remounted with busybox, because the `mount` of Android 2.3 needs the device name. |
 | FB Tools manager | Works | Install, newer-build update with Repair, and start. Tested with scripts through the app's API. |
 | Phone Files (browse, upload, download) | Unknown | The old shell has no `test`, `[`, or `mkdir -p`. The code avoids them, but nobody ran the file operations here. |
 | Boot straight into FB Tools | Unknown | The boot hook (`install-recovery-2.sh`) may not run on this ROM. |
