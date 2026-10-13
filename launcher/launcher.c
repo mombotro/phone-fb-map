@@ -131,7 +131,9 @@ static void scan_carts(void) {
     if (!d) return;
     struct dirent *e;
     while ((e = readdir(d))) {
-        if (e->d_name[0] == '.' || !(has_ext(e->d_name, ".lua") || has_ext(e->d_name, ".tic"))) continue;
+        static const char *CART_EXT[] = { ".tic", ".lua", ".js", ".moon", ".fnl", ".wren", ".scm", ".py", ".janet", NULL };      // the languages of the TIC-80 player
+        int is_cart = 0; for (int k = 0; CART_EXT[k]; k++) if (has_ext(e->d_name, CART_EXT[k])) is_cart = 1;
+        if (e->d_name[0] == '.' || !is_cart) continue;
         if (g_ncarts == cap) { cap *= 2; g_carts = realloc(g_carts, cap * sizeof(Cart)); }
         snprintf(g_carts[g_ncarts++].name, sizeof g_carts[0].name, "%s", e->d_name);
     }

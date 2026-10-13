@@ -1,5 +1,5 @@
 #!/bin/bash
-# Gets the TIC-80 source (MIT license, by Vadim Grigoruk) at the tested commit, plus the five
+# Gets the TIC-80 source (MIT license, by Vadim Grigoruk) at the tested commit, plus the
 # vendor libraries that the core needs. Run this once before build_core.sh.
 set -e
 cd "$(dirname "$0")"
@@ -11,5 +11,5 @@ if [ ! -d src/.git ]; then
 fi
 git -C src fetch --depth 1 origin "$SHA"
 git -C src checkout -q FETCH_HEAD
-git -C src submodule update --init --depth 1 vendor/lua vendor/blip-buf vendor/zlib vendor/libpng vendor/giflib
+git -C src submodule update --init --depth 1 vendor/lua vendor/blip-buf vendor/zlib vendor/libpng vendor/giflib vendor/quickjs vendor/lpeg vendor/moonscript vendor/wren vendor/squirrel vendor/janet vendor/pocketpy vendor/wasm3 vendor/pforth
 echo "TIC-80 source ready in tic80/src"

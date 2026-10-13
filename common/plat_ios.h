@@ -253,3 +253,9 @@ PLAT_FN int plat_mt_raw(float *x, float *y) {
         if (plat__mt[i].active) { *x = plat__mt[i].x; *y = plat__mt[i].y; return 1; }
     return 0;
 }
+
+// Rumble: not done on the iPhone yet (the call is here so programs can use it on every phone).
+static void plat_rumble(int ms) { (void)ms; }
+
+// A program can tell which part of the picture changed; nothing to do on the iPhone.
+static void plat_set_dirty(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }

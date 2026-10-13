@@ -252,6 +252,17 @@ static void plat_volume_set(int v) {
     fprintf(f, "%d\n", v < 0 ? 0 : v > 100 ? 100 : v); fclose(f); chmod(PLAT_VOLUME_FILE, 0666);
 }
 
+// A short buzz of the vibration motor, for the buttons of a game. The motors of these phones (Android kernels with "timed output") take a
+// time in milliseconds written to a file. A phone without a motor does nothing. A pulse while the last one is running is skipped.
+static void plat_rumble(int ms) {
+    static int fd = -2; static double until;
+    if (fd == -2) fd = open("/sys/class/timed_output/vibrator/enable", O_WRONLY);
+    if (fd < 0 || ms <= 0) return;
+    double t = plat__now(); if (t < until) return;
+    char b[16]; int l = snprintf(b, sizeof b, "%d", ms > 200 ? 200 : ms);
+    if (write(fd, b, (size_t)l) > 0) until = t + ms / 1000.0;
+}
+
 // The Wi-Fi interface: the first network device with "wlan" in its name (wlan0, tiwlan0). Returns 0 when there is none.
 static int plat__wifi_name(char *out, size_t n) {
     DIR *d = opendir("/sys/class/net"); if (!d) return 0;
@@ -574,21 +585,45 @@ PLAT_FN uint32_t *plat_begin(int *stride_px) {
     return (uint32_t *)(plat__base + (size_t)plat__page * plat__v.yres * plat__f.line_length);
 }
 
-// Rotate the programs' buffer into the framebuffer page we are about to show.
+// A program that redraws only part of its picture can say which part (logical coordinates, before the next flip). Then only that part is
+// copied or rotated into the page. The program must then draw the whole picture into every page first: that is a few full flips (the number
+// of pages) after the rest of the picture changed.
+static int plat__dirty, plat__dx0, plat__dy0, plat__dx1, plat__dy1;
+PLAT_FN void plat_set_dirty(int x, int y, int w, int h) { plat__dirty = 1; plat__dx0 = x; plat__dy0 = y; plat__dx1 = x + w; plat__dy1 = y + h; }
+
+// Rotate the programs' buffer into the framebuffer page we are about to show (only the dirty rectangle if there is one). It works in tiles of
+// 16 screen rows: the buffer is read along its rows and the writes go to 16 rows at a time, which the memory cache of an old phone can follow.
+// (Reading one buffer column per screen row, as before, made a wide picture on a tall screen very slow.)
 static void plat__rotate_into_page(void) {
     uint32_t *dst0 = (uint32_t *)(plat__base + (size_t)plat__page * plat__v.yres * plat__f.line_length);
     int fw = plat__v.xres, fh = plat__v.yres, fs = plat__f.line_length / 4, lw = plat__lw, lh = plat__lh;
-    for (int py = 0; py < fh; py++) {
-        uint32_t *dst = dst0 + (size_t)py * fs;
-        if (plat__rot == 1) { int lx = lw - 1 - py; for (int px = 0; px < fw; px++) dst[px] = plat__lbuf[(size_t)px * lw + lx]; }
-        else                { int lx = py;          for (int px = 0; px < fw; px++) dst[px] = plat__lbuf[(size_t)(lh - 1 - px) * lw + lx]; }
+    int py0 = 0, py1 = fh, px0 = 0, px1 = fw;
+    if (plat__dirty) {                                           // the screen rows and columns that the logical rectangle covers
+        if (plat__rot == 1) { py0 = lw - plat__dx1; py1 = lw - plat__dx0; px0 = plat__dy0; px1 = plat__dy1; }
+        else                { py0 = plat__dx0; py1 = plat__dx1; px0 = lh - plat__dy1; px1 = lh - plat__dy0; }
+        if (py0 < 0) py0 = 0; if (py1 > fh) py1 = fh; if (px0 < 0) px0 = 0; if (px1 > fw) px1 = fw;
+    }
+    for (int pyb = py0; pyb < py1; pyb += 16) {
+        int pye = pyb + 16 < py1 ? pyb + 16 : py1;
+        for (int px = px0; px < px1; px++) {
+            if (plat__rot == 1) { const uint32_t *src = plat__lbuf + (size_t)px * lw; for (int py = pyb; py < pye; py++) dst0[(size_t)py * fs + px] = src[lw - 1 - py]; }
+            else                { const uint32_t *src = plat__lbuf + (size_t)(lh - 1 - px) * lw; for (int py = pyb; py < pye; py++) dst0[(size_t)py * fs + px] = src[py]; }
+        }
     }
 }
 
 PLAT_FN void plat_flip(void) {
     if (plat__off) { usleep(60000); return; }                  // the screen is off: do not draw
     if (plat__rot) plat__rotate_into_page();
-    else if (plat__sbuf) memcpy(plat__base + (size_t)plat__page * plat__v.yres * plat__f.line_length, plat__sbuf, (size_t)plat__v.yres * plat__f.line_length);
+    else if (plat__sbuf) {
+        uint8_t *pg = plat__base + (size_t)plat__page * plat__v.yres * plat__f.line_length;
+        if (plat__dirty) {                                       // only the rows and columns that changed
+            int y0 = plat__dy0 < 0 ? 0 : plat__dy0, y1 = plat__dy1 > (int)plat__v.yres ? (int)plat__v.yres : plat__dy1;
+            int x0 = plat__dx0 < 0 ? 0 : plat__dx0, x1 = plat__dx1 > (int)plat__v.xres ? (int)plat__v.xres : plat__dx1;
+            for (int y = y0; y < y1; y++) memcpy(pg + (size_t)y * plat__f.line_length + (size_t)x0 * 4, (uint8_t *)plat__sbuf + (size_t)y * plat__f.line_length + (size_t)x0 * 4, (size_t)(x1 - x0) * 4);
+        } else memcpy(pg, plat__sbuf, (size_t)plat__v.yres * plat__f.line_length);
+    }
+    plat__dirty = 0;
     struct fb_var_screeninfo pv = plat__v;
     pv.yoffset = plat__page * plat__v.yres;
     ioctl(plat__fd, FBIOPAN_DISPLAY, &pv);

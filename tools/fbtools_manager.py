@@ -32,7 +32,7 @@ APPS = [
     {"id": "calendar", "name": "Calendar", "desc": "A month calendar with your events and the dated to-do items of your notes.", "bin": "calendar", "data": ["data/calendar"]},
     {"id": "pixel", "name": "Pixel", "desc": "Draw pixel art. Saves .pix files and .bmp pictures.", "bin": "pixel", "data": ["data/pixel"]},
     {"id": "fonts", "name": "Reading fonts", "desc": "OpenDyslexic, Atkinson Hyperlegible, and Lexend for Reader and Bible. Choose one in the momPKT settings.", "bin": None, "data": ["data/fonts"], "extra": ["data/fonts/OpenDyslexic.otf", "data/fonts/AtkinsonHyperlegible.ttf", "data/fonts/Lexend.ttf"]},
-    {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic and .lua). Put carts in the carts folder. Comes with a beat box and a sound test.", "bin": "tic80", "data": ["carts"], "extra": ["carts/beatbox.lua", "carts/soundtest.lua"], "android_extra": ["musichelper.jar"], "only": ["ios7", "android"]},
+    {"id": "tic80", "name": "TIC-80", "desc": "Play TIC-80 game carts (.tic, and project files in Lua, JavaScript, MoonScript, Fennel, Wren, Scheme, Python, and Janet). Put carts in the carts folder. Comes with a beat box and a sound test.", "bin": "tic80", "data": ["carts"], "extra": ["carts/beatbox.lua", "carts/soundtest.lua"], "android_extra": ["musichelper.jar"], "only": ["ios7", "android"]},
     {"id": "longhouse", "name": "Longhouse chat", "desc": "Family chat (text). Sign in with tools/longhouse_login.py.", "bin": "longhouse", "data": ["data/longhouse"]},
     {"id": "calib", "name": "Calibrate", "desc": "Fix the touch axes.", "bin": "calib", "only": ["ios7", "ios12"]},
     {"id": "console", "name": "Console", "desc": "A text console demo.", "bin": "condemo", "only": ["android"]},
