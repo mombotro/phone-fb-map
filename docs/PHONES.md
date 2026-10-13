@@ -157,7 +157,7 @@ The shell in Android 2.3 has no `test` or `[`, and it crashes on `trap`. The pro
 | Music | Works | The media server cannot read files in `/data/local/tmp`. The helper gives each song a media label first. |
 | Home-screen icon | Unknown | The first tap needs a Magisk "Grant Superuser" tap. |
 | Boot straight into FB Tools | Works | A Magisk `service.d` script starts `fbrun` at boot. The picker came up by itself about 30 seconds after Android finished. |
-| Screen off and on | Untested | The Qualcomm display loses the picture when its panel is powered down, and a tap was needed to bring it back. The power button now only switches the backlight on these displays (the panel stays on). Works on the Nexus 4. After Android stops, the backlight of this phone can stay dark while its setting still shows the old level. The picker writes the level again at start, and that fixes the boot. |
+| Screen off and on | Works | The Qualcomm display loses the picture when its panel is powered down, and a tap was needed to bring it back. The power button now only switches the backlight on these displays (the panel stays on). Works on the Nexus 4 and this phone. After Android stops, the backlight of this phone can stay dark while its setting still shows the old level. The picker writes the level again at start, and that fixes the boot. |
 
 ## Moto Z2 Force (Android 8.0)
 
