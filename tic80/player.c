@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
         exit_x = 0; exit_y = H - exit_h;
     }
 
-    tic80 *tic = tic80_create(TIC80_SAMPLERATE, TIC80_PIXEL_COLOR_ARGB8888);
+    tic80 *tic = tic80_create(TIC80_SAMPLERATE, TIC80_PIXEL_COLOR_BGRA8888);
     tic->callback.trace = trace_cb; tic->callback.error = error_cb; tic->callback.exit = exit_cb;
     tic80_load(tic, data, (s32)size);
     if (snd_init(TIC80_SAMPLERATE)) fprintf(stderr, "no sound output on this platform\n");
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
         Surf s = { px, stride, W, H, pi.rs, pi.gs, pi.bs, pi.alpha };
         draw_rect(&s, 0, 0, W, H, 0x14181F);
 
-        // game: convert ARGB8888 to the framebuffer's channel order, scale by an integer factor
+        // game: the core writes bytes B,G,R,A, which is 0xAARRGGBB as a number here. Convert it to the framebuffer's channel order, scale by an integer factor
         int ident = pi.rs == 16 && pi.gs == 8 && pi.bs == 0;
         for (int sy = 0; sy < TIC80_FULLHEIGHT; sy++) {
             uint32_t *line = px + (size_t)(gy + sy * scale) * stride + gx;
