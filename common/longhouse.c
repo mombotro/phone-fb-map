@@ -12,6 +12,7 @@
 #include "draw.h"
 #include "kbd.h"
 #include "ui.h"
+#include "lhemoji.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
 #define STBI_NO_STDIO
@@ -290,7 +291,8 @@ static int http_do(const char *method, const char *path, const char *body, char 
 // ---------------------------------------------------------------- data
 
 typedef struct { char id[96]; char kind[8]; char title[100]; char members[16][96]; int nmem; } Conv;
-typedef struct { char id[96]; char sender[96]; char *body; char when[24]; char iso[32]; int deleted, edited, picture, has_thumb; } Msg;
+typedef struct { char id[96]; char sender[96]; char *body; char when[24]; char iso[32]; int deleted, edited, picture, has_thumb;
+                 char reply_to[96]; unsigned char react[LHE_REACT]; int mine; } Msg;      // reply_to: the id this answers; react: how many of each reaction; mine: my reaction, or -1
 #define MAXCONV 64
 #define MAXMSG 200
 static Conv g_conv[MAXCONV]; static int g_nconv;
@@ -417,7 +419,17 @@ static int fetch_messages(const char *conv_id) {
             JN *k = media && media->t == J_OBJ ? jget(media, "kind") : NULL;
             strcat(o->body, bl ? "\n" : ""); strcat(o->body, k && !strcmp(jstr(k), "video") ? "[video]" : (k && !strcmp(jstr(k), "file") ? "[file]" : "[picture]"));
         }
-        ascii_clean(o->body); g_nmsg++;
+        lhe_clean_body(o->body);
+        JN *rt = jget(m, "replyTo"); snprintf(o->reply_to, sizeof o->reply_to, "%s", rt && rt->t == J_STR ? rt->s : "");
+        memset(o->react, 0, sizeof o->react); o->mine = -1;
+        JN *rx = jget(m, "reactions");
+        if (rx && rx->t == J_ARR && !o->deleted) for (int k = 0; k < rx->len; k++) {
+            JN *r = rx->v[k], *em = jget(r, "emoji"); if (!em || em->t != J_STR) continue;
+            int ei = lhe_reaction_index(em->s); if (ei < 0) continue;
+            if (o->react[ei] < 250) o->react[ei]++;
+            if (!strcmp(jstr(jget(r, "personId")), g_cfg.person)) o->mine = ei;
+        }
+        g_nmsg++;
     }
     jfree(j);
     qsort(g_msg, (size_t)g_nmsg, sizeof g_msg[0], msg_cmp);
@@ -436,11 +448,22 @@ static void json_escape(const char *s, char *out, size_t n) {
     out[o] = 0;
 }
 
-static int send_message(const char *conv_id, const char *text) {
+static int send_message(const char *conv_id, const char *text, const char *reply_to) {
     char path[200]; snprintf(path, sizeof path, "/conversations/%s/messages", conv_id);
-    char esc[8400], body[8600]; json_escape(text, esc, sizeof esc);
-    snprintf(body, sizeof body, "{\"body\":\"%s\"}", esc);
+    char esc[8400], body[8800]; lhe_json_body(text, esc, sizeof esc);
+    if (reply_to && reply_to[0]) snprintf(body, sizeof body, "{\"body\":\"%s\",\"replyTo\":\"%s\"}", esc, reply_to);
+    else snprintf(body, sizeof body, "{\"body\":\"%s\"}", esc);
     char *out; int st = http_do("POST", path, body, &out); free(out);
+    return st == 200 ? 0 : -1;
+}
+
+// A reaction (one of the first six emoji). The same one again takes it back. The server needs the HTTP reaction route for this.
+static int react_message(const char *conv_id, const char *msg_id, int idx) {
+    char path[300]; snprintf(path, sizeof path, "/conversations/%s/messages/%s/reaction", conv_id, msg_id);
+    char body[80]; snprintf(body, sizeof body, "{\"emoji\":\"%s\"}", LHE[idx].json);
+    char *out; int st = http_do("PUT", path, body, &out); free(out);
+    if (st == 404) snprintf(g_err, sizeof g_err, "the server has no reaction route yet");
+    else if (st != 200) snprintf(g_err, sizeof g_err, "reaction not sent (%d)", st);
     return st == 200 ? 0 : -1;
 }
 
@@ -597,6 +620,29 @@ static int pic_extra(const Msg *m) {                              // extra heigh
 }
 static void queue_pics(void) { int n = 0; for (int i = g_nmsg - 1; i >= 0 && n < 8; i--) if (g_msg[i].has_thumb && !g_msg[i].deleted) { pic_request(g_msg[i].id); n++; } }
 
+static int find_msg(const char *id) { for (int i = 0; i < g_nmsg; i++) if (!strcmp(g_msg[i].id, id)) return i; return -1; }
+static int msg_rq(const Msg *m) { return m->reply_to[0] && !m->deleted ? 20 : 0; }               // height of the quote line of a reply
+static int msg_rc(const Msg *m) { if (m->deleted) return 0; for (int k = 0; k < LHE_REACT; k++) if (m->react[k]) return 30; return 0; }    // height of the row of reactions
+
+// Text with emoji: the marker bytes 1 to 12 (and the space after each) become pictures. Everything else is drawn as text.
+static void draw_rich(Ui *u, int x, int y, int sc, const char *line, uint32_t col) {
+    char seg[300]; int n = 0;
+    for (const char *p = line;; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == 0 || (c >= 1 && c <= LHE_N)) {
+            seg[n] = 0; if (n) ui_label(u, x, y, sc, seg, col);
+            x += n * 8 * sc; n = 0;
+            if (c == 0) break;
+            lhe_draw(u->s, c - 1, x + 2 * sc, y + 2 * sc, sc);                    // 12 by 12 pixels of sc: a bit smaller than the two cells it covers
+            x += 8 * sc;
+        } else if (n < 299) seg[n++] = (char)c;
+    }
+}
+static void plain_text(char *dst, size_t n, const char *src) {                    // the same text with the markers as "*", for a short quote
+    size_t o = 0; for (; *src && o + 1 < n; src++) { unsigned char c = (unsigned char)*src; if (c >= 1 && c <= LHE_N) { dst[o++] = '*'; if (src[1] == ' ') src++; } else if (c == '\n') dst[o++] = ' '; else dst[o++] = (char)c; }
+    dst[o] = 0;
+}
+
 enum { V_LIST, V_CHAT };
 
 int main(int argc, char **argv) {
@@ -617,7 +663,8 @@ int main(int argc, char **argv) {
     Ui u; memset(&u, 0, sizeof u);
     UiEdit ed; ui_edit_init(&ed, 4000);
     UiScroll list_sc = {0}, chat_sc = {0};
-    int view = V_LIST, sel = -1, dirty = 3, quit = 0, follow = 1, blink = 1;
+    int view = V_LIST, sel = -1, dirty = 3, quit = 0, follow = 1, blink = 1, picker = 0;
+    char selid[96] = "", reply_id[96] = "";                            // the message a tap picked, and the message the next send answers
     char status[220] = "";
     const int BAR = 64, IN_H = 96, ROW = 84, SC = 2, CW = 8 * SC, LH = 16 * SC + 4;
     double t0 = ui_now(), t_blink = t0, t_fetch = 0;
@@ -680,15 +727,18 @@ int main(int argc, char **argv) {
             if (!g_nconv && g_have_cfg) ui_label(&u, 14, ly + 24, 2, "No chats yet.", 0x8899AA);
         } else {
             char title[128]; ui_fit(title, sizeof title, g_conv[sel].title, (W - 260) / CW);
-            if (ui_button(&u, 8, 8, 112, BAR - 16, "BACK", 0x34608F)) { view = V_LIST; t_fetch = 0; free_messages(); dirty = 3; }
+            if (ui_button(&u, 8, 8, 112, BAR - 16, "BACK", 0x34608F)) { view = V_LIST; t_fetch = 0; free_messages(); selid[0] = 0; reply_id[0] = 0; picker = 0; dirty = 3; }
             ui_label(&u, 134, 16, 2, title, 0xFFFFFF);
             if (ui_button(&u, W - 120, 8, 112, BAR - 16, "SYNC", 0x34608F)) { fetch_messages(g_conv[sel].id); snprintf(status, sizeof status, "%s", g_err); t_fetch = ui_now(); follow = 1; chat_sc.pos = 1 << 28; }
 
-            // the message area, between the header and the input box
-            int my = BAR, mh = kb_y - IN_H - BAR, cols = (W - 24) / CW;
+            // the message area, between the header and the input box. Below it: the action bar of a picked message, the emoji picker, the reply banner.
+            const int ABAR = 60, PICK_H = 56, REPLY_H = 34;
+            int selidx = selid[0] ? find_msg(selid) : -1; if (selidx < 0) selid[0] = 0;
+            int extra = (selidx >= 0 ? ABAR : 0) + (picker ? PICK_H : 0) + (reply_id[0] ? REPLY_H : 0);
+            int my = BAR, mh = kb_y - IN_H - BAR - extra, cols = (W - 24) / CW;
             int total = 12;
             static int st[64], ln[64];
-            for (int i = 0; i < g_nmsg; i++) total += LH + wrap_lines(g_msg[i].body, cols, st, ln, 64) * LH + 12 + pic_extra(&g_msg[i]);
+            for (int i = 0; i < g_nmsg; i++) total += LH + msg_rq(&g_msg[i]) + wrap_lines(g_msg[i].body, cols, st, ln, 64) * LH + 12 + pic_extra(&g_msg[i]) + msg_rc(&g_msg[i]);
             int maxs = total - mh; if (maxs < 0) maxs = 0;
             if (follow && chat_sc.pos > maxs) chat_sc.pos = maxs;
             int before = chat_sc.pos;
@@ -696,24 +746,53 @@ int main(int argc, char **argv) {
             if (chat_sc.pos < before - 4) follow = 0; else if (chat_sc.pos >= maxs) follow = 1;
             int y = my + 8 - chat_sc.pos;
             for (int i = 0; i < g_nmsg; i++) {
-                int nl = wrap_lines(g_msg[i].body, cols, st, ln, 64), ex = pic_extra(&g_msg[i]), h = LH + nl * LH + 12 + ex;
+                int nl = wrap_lines(g_msg[i].body, cols, st, ln, 64), ex = pic_extra(&g_msg[i]), rq = msg_rq(&g_msg[i]), rc = msg_rc(&g_msg[i]);
+                int h = LH + rq + nl * LH + 12 + ex + rc;
                 if (y + h > my && y < my + mh) {
-                    int mine = !strcmp(g_msg[i].sender, g_cfg.person);
+                    int mine = !strcmp(g_msg[i].sender, g_cfg.person), picked = i == selidx;
                     int r0 = y < my ? my : y, r1 = y + h - 6 > my + mh ? my + mh : y + h - 6;           // clip the bubble to the message area, so it never covers the header
                     if (r1 > r0) draw_rect(&s, 4, r0, W - 8, r1 - r0, mine ? 0x1D3A2C : 0x1A2230);
+                    if (picked && r1 > r0) {                                                              // the picked message gets an outline, so it still shows whose it is
+                        uint32_t oc = 0xE8F0FF; int ot = y >= my, ob = y + h - 6 <= my + mh;                 // no top or bottom edge where the bubble is cut off
+                        if (ot) draw_rect(&s, 4, r0, W - 8, 3, oc);
+                        if (ob) draw_rect(&s, 4, r1 - 3, W - 8, 3, oc);
+                        draw_rect(&s, 4, r0, 3, r1 - r0, oc); draw_rect(&s, W - 7, r0, 3, r1 - r0, oc);
+                    }
+                    if (u.tapped && ui_inside(u.tap_x, u.tap_y, 0, r0, W, r1 - r0 > 0 ? r1 - r0 : 0)) {          // a tap on a message picks it (again: lets go)
+                        if (picked) selid[0] = 0; else snprintf(selid, sizeof selid, "%s", g_msg[i].id);
+                        u.tapped = 0; dirty = 3;
+                    }
                     char head[160]; snprintf(head, sizeof head, "%s  %s%s", name_of(g_msg[i].sender), g_msg[i].when, g_msg[i].edited ? "  (edited)" : "");
                     if (y + 4 >= my && y + 4 + 16 <= my + mh) ui_label(&u, 12, y + 4, 1, head, mine ? 0x77DD99 : 0x77BBFF);
+                    if (rq && y + 22 >= my && y + 22 + 16 <= my + mh) {                                 // the line it answers
+                        int j = find_msg(g_msg[i].reply_to); char q[140], qt[100], qb[200];
+                        if (j >= 0) { plain_text(qt, sizeof qt, g_msg[j].body); snprintf(q, sizeof q, "%s: %s", name_of(g_msg[j].sender), qt); }
+                        else snprintf(q, sizeof q, "an earlier message");
+                        ui_fit(qb, sizeof qb, q, (W - 40) / 8);
+                        draw_rect(&s, 12, y + 22, 3, 16, 0x4C8DDB); ui_label(&u, 22, y + 22, 1, qb, 0x8899AA);
+                    }
                     for (int l = 0; l < nl; l++) {
                         char line[300]; int ll = ln[l] < 299 ? ln[l] : 299; memcpy(line, g_msg[i].body + st[l], (size_t)ll); line[ll] = 0;
-                        int ly2 = y + LH - 4 + l * LH;
-                        if (ly2 >= my && ly2 + LH <= my + mh) ui_label(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8);       // whole lines only
+                        int ly2 = y + LH - 4 + rq + l * LH;
+                        if (ly2 >= my && ly2 + LH <= my + mh) draw_rich(&u, 12, ly2, SC, line, g_msg[i].deleted ? 0x778899 : 0xE8E8E8);       // whole lines only
                     }
                     if (ex) {
-                        int iy2 = y + LH - 4 + nl * LH + 4;
+                        int iy2 = y + LH - 4 + rq + nl * LH + 4;
                         pthread_mutex_lock(&g_pm); Pic *pp = pic_find(g_msg[i].id);
                         if (pp && pp->state == 2) blit_rgb(&s, 12, iy2, pp->rgb, pp->w, pp->h, my, my + mh);
                         else if (pp && pp->state == 3 && iy2 >= my && iy2 + 16 <= my + mh) { char eb[100]; snprintf(eb, sizeof eb, "(picture: %.70s)", pp->err); ui_label(&u, 12, iy2, 1, eb, 0xFFAA66); }
                         pthread_mutex_unlock(&g_pm);
+                    }
+                    if (rc) {                                                                          // the reactions: a picture and a count each
+                        int cx = 12, cy = y + LH - 4 + rq + nl * LH + ex + 2;
+                        if (cy >= my && cy + 26 <= my + mh) for (int k = 0; k < LHE_REACT; k++) if (g_msg[i].react[k]) {
+                            char cnt[8]; snprintf(cnt, sizeof cnt, "%d", g_msg[i].react[k]);
+                            int cw = 8 + 24 + 6 + (int)strlen(cnt) * 8 + 8;
+                            draw_rect(&s, cx, cy, cw, 26, g_msg[i].mine == k ? 0x4C8DDB : 0x2A3344);
+                            draw_rect(&s, cx + 2, cy + 2, cw - 4, 22, g_msg[i].mine == k ? 0x1F3A5E : 0x1E2634);
+                            lhe_draw(&s, k, cx + 8, cy + 1, 2); ui_label(&u, cx + 8 + 24 + 6, cy + 5, 1, cnt, 0xDDE6F0);
+                            cx += cw + 6;
+                        }
                     }
                 }
                 y += h;
@@ -721,14 +800,58 @@ int main(int argc, char **argv) {
             if (!g_nmsg) ui_label(&u, 14, my + 20, 2, g_have_cfg ? "No messages yet." : "No session.", 0x8899AA);
             draw_rect(&s, 0, my - 1, W, 1, 0x26303E);
 
+            // below the messages: what to do with the picked message, the emoji to type, and who the reply goes to
+            int by = my + mh;
+            if (selidx >= 0) {
+                draw_rect(&s, 0, by, W, ABAR, 0x1F2A3C); draw_rect(&s, 0, by, W, 2, 0x4C8DDB);
+                if (ui_button(&u, 8, by + 6, 112, ABAR - 12, "REPLY", 0x34608F)) { snprintf(reply_id, sizeof reply_id, "%s", g_msg[selidx].id); selid[0] = 0; dirty = 3; }
+                int sx0 = 130, sw = (W - sx0 - 4) / LHE_REACT;
+                for (int k = 0; k < LHE_REACT; k++) {
+                    int bx = sx0 + k * sw;
+                    draw_rect(&s, bx, by + 6, sw - 4, ABAR - 12, g_msg[selidx].mine == k ? 0x4C8DDB : 0x2A3344);
+                    lhe_draw(&s, k, bx + (sw - 4 - 36) / 2, by + 6 + (ABAR - 12 - 36) / 2, 3);
+                    if (u.tapped && ui_inside(u.tap_x, u.tap_y, bx, by + 6, sw - 4, ABAR - 12)) {
+                        u.tapped = 0;
+                        if (react_message(g_conv[sel].id, g_msg[selidx].id, k) == 0) { fetch_messages(g_conv[sel].id); snprintf(status, sizeof status, "%s", ""); }
+                        else snprintf(status, sizeof status, "%s", g_err);
+                        selid[0] = 0; t_fetch = ui_now(); dirty = 3; break;
+                    }
+                }
+                by += ABAR;
+            }
+            if (picker) {
+                draw_rect(&s, 0, by, W, PICK_H, 0x1B2330);
+                int pw = W / LHE_N;
+                for (int k = 0; k < LHE_N; k++) {
+                    int bx = k * pw;
+                    draw_rect(&s, bx + 2, by + 4, pw - 4, PICK_H - 8, 0x2A3344);
+                    lhe_draw(&s, k, bx + (pw - 36) / 2, by + (PICK_H - 36) / 2, 3);
+                    if (u.tapped && ui_inside(u.tap_x, u.tap_y, bx, by, pw, PICK_H)) {
+                        u.tapped = 0; for (const char *c = LHE[k].code; *c; c++) ui_edit_key(&ed, *c);
+                        dirty = 3; blink = 1; t_blink = t;
+                    }
+                }
+                by += PICK_H;
+            }
+            if (reply_id[0]) {
+                draw_rect(&s, 0, by, W, REPLY_H, 0x253044);
+                int j = find_msg(reply_id); char q[160], qt[100], qb[200];
+                if (j >= 0) { plain_text(qt, sizeof qt, g_msg[j].body); snprintf(q, sizeof q, "Replying to %s: %s", name_of(g_msg[j].sender), qt); }
+                else snprintf(q, sizeof q, "Replying to an earlier message");
+                ui_fit(qb, sizeof qb, q, (W - 90) / 8);
+                ui_label(&u, 10, by + 9, 1, qb, 0xAFC4E0);
+                if (ui_button(&u, W - 70, by + 3, 64, REPLY_H - 6, "X", 0x883333)) { reply_id[0] = 0; dirty = 3; }
+            }
+
             // the input box and SEND
             int iy = kb_y - IN_H;
             draw_rect(&s, 0, iy, W, IN_H, 0x1B2330);
-            ui_edit_draw(&u, &ed, 6, iy + 6, W - 130, IN_H - 12, SC, blink);
+            ui_edit_draw(&u, &ed, 6, iy + 6, W - 250, IN_H - 12, SC, blink);
+            if (ui_button(&u, W - 238, iy + 10, 112, IN_H - 20, "EMOJI", picker ? 0x2E7D4F : 0x34608F)) { picker ^= 1; dirty = 3; }
             if (ui_button(&u, W - 118, iy + 10, 110, IN_H - 20, "SEND", 0x2E7D4F) && ed.len > 0 && g_have_cfg) {
                 char *text = strdup(ed.buf); size_t tl = strlen(text); while (tl && text[tl - 1] == ' ') text[--tl] = 0;
                 if (tl) {
-                    if (send_message(g_conv[sel].id, text) == 0) { ui_edit_set(&ed, ""); fetch_messages(g_conv[sel].id); follow = 1; chat_sc.pos = 1 << 28; snprintf(status, sizeof status, "sent"); }
+                    if (send_message(g_conv[sel].id, text, reply_id) == 0) { ui_edit_set(&ed, ""); reply_id[0] = 0; fetch_messages(g_conv[sel].id); follow = 1; chat_sc.pos = 1 << 28; snprintf(status, sizeof status, "sent"); }
                     else snprintf(status, sizeof status, "not sent: %s", g_err);
                     t_fetch = ui_now();
                 }
