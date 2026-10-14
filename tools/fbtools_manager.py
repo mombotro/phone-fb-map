@@ -552,7 +552,7 @@ def do_start(dev, plat, log):
         android_up_needed = "not found" not in dev.sh("service check window", timeout=15).stdout.decode()
         android_set_clock(dev, log)
         log("Starting FB Tools on the phone (Android stops while it runs)...")
-        dev.sh(dev.rmf(b + "/fbboot_off") + "; " + b + "/fbrun -d 3600 fblauncher", timeout=20)
+        dev.sh(dev.rmf(b + "/fbboot_off") + "; " + b + "/fbrun -d 31536000 fblauncher", timeout=20)
     elif plat == "ios7":
         log("Starting FB Tools...")
         dev.sh("(sh /var/root/run_kiosk_ios.sh 3 </dev/null >/dev/null 2>&1 &) ; true" if m.get("mode") == "boot"

@@ -16,6 +16,7 @@ static int g_hin = -1, g_hout = -1;            // pipe to and from the helper
 static pid_t g_hpid;
 static char g_hbuf[1024]; static int g_hlen;
 static long g_pos_ms, g_dur_ms;
+static int g_err_eof;                            // the last end of a file was an error of the helper, not the end of the song
 
 // File types the platform MediaPlayer on Android 4.x plays.
 static int dec_supported(const char *name) {
@@ -40,7 +41,7 @@ static void hline(const char *l) {
     else if (!strcmp(l, "state playing")) { g_playing = 1; g_paused = 0; }
     else if (!strcmp(l, "state paused")) g_paused = 1;
     else if (!strcmp(l, "state ended")) g_eof = 1;
-    else if (!strncmp(l, "state error", 11)) { LOG("helper: %s", l); g_eof = 1; }
+    else if (!strncmp(l, "state error", 11)) { LOG("helper: %s", l); g_err_eof = 1; g_eof = 1; }
     else if (strcmp(l, "ready") && strncmp(l, "state stopped", 13)) LOG("helper: %s", l);
 }
 

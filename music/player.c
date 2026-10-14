@@ -321,7 +321,7 @@ static int daemon_main(const char *root) {
     unlink(MUSIC_CMD);
     off_t cmd_off = 0;
     double eof_t = 0, next_state = 0, next_vol = 0, idle0 = now();
-    int master = -1, quit = 0;
+    int master = -1, quit = 0, fails = 0;
     while (!quit) {
         double t = now();
         audio_poll();
@@ -341,7 +341,15 @@ static int daemon_main(const char *root) {
         }
         if (g_playing && g_eof) {                                       // the file ended: let the queued sound play out, then go on
             if (eof_t == 0) eof_t = t;
-            else if (t - eof_t > 0.45) { eof_t = 0; if (play_after_end()) stop_audio(); }
+            else if (t - eof_t > 0.45) {
+                eof_t = 0;
+                if (g_err_eof) {                                        // the helper could not play the file: do not go through the whole list at once
+                    g_err_eof = 0; fails++;
+                    if (fails == 2) { LOG("the helper fails: starting it again"); audio_shutdown(); if (audio_load()) { stop_audio(); fails = 0; } else if (play_step(0)) stop_audio(); }
+                    else if (fails >= 4) { LOG("four files in a row failed: stopping"); stop_audio(); fails = 0; }
+                    else if (play_after_end()) stop_audio();
+                } else { fails = 0; if (play_after_end()) stop_audio(); }
+            }
         } else eof_t = 0;
         if (t >= next_vol) { next_vol = t + 0.5; int m = plat_volume_get(); if (m != master) { master = m; audio_set_volume(1); } }
         if (t >= next_state) {
