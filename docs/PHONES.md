@@ -20,6 +20,7 @@ The last update was on 2026-10-10.
 | LG Intuition (VS950) | Android 4.1.2 | Root (SuperSU) | Most features work, including boot into FB Tools. |
 | Nexus 4 | Android 7.1.2 (LineageOS 14.1) | Root (Magisk 27, patched boot image) | The picker, apps, TIC-80 sound, and music work. The picker starts at boot. |
 | Barnes & Noble Nook HD | Android 7.1.1 (LineageOS 14.1) | Root (su) | The picker and icon work. Boot into FB Tools gives a black screen. |
+| Motorola Moto G7 Power (XT1955-5, retail US) | Android 10 | Root (Magisk, after a Motorola bootloader unlock) | The picker starts at boot. Apps and the display work; sound is untested. |
 | Motorola Moto E5 Play (Sprint) | Android 8.0 | Root (Magisk, after a Motorola bootloader unlock) | The picker, touch, apps, TIC-80 sound, and music work. |
 | Motorola Moto G Play (XT1607, Amazon edition) | Android 7.1.1 | Not rooted | No. Motorola's site says the phone is not eligible for a bootloader unlock, so it cannot be rooted. |
 | Kindle Fire (1st generation) | Android 2.3.4 | Root (su) | The picker, apps, sound, and FB Tools manager work. The screen is rotated in software. |
@@ -159,6 +160,18 @@ The shell in Android 2.3 has no `test` or `[`, and it crashes on `trap`. The pro
 | Home-screen icon | Unknown | The first tap needs a Magisk "Grant Superuser" tap. |
 | Boot straight into FB Tools | Works | A Magisk `service.d` script starts `fbrun` at boot. The picker came up by itself about 30 seconds after Android finished. |
 | Screen off and on | Works | The Qualcomm display loses the picture when its panel is powered down, and a tap was needed to bring it back. The power button now only switches the backlight on these displays (the panel stays on). Works on the Nexus 4 and this phone. After Android stops, the backlight of this phone can stay dark while its setting still shows the old level. The picker writes the level again at start, and that fixes the boot. |
+
+## Motorola Moto G7 Power, XT1955-5 retail US (Android 10, Snapdragon 632, "ocean")
+
+| Feature | Status | Notes |
+|---|---|---|
+| Opening the phone | Works | Motorola's unlock code (free account, `fastboot oem get_unlock_data`, then `fastboot oem unlock <code>` twice) erases the phone. The official TWRP for `ocean` boots once with `fastboot boot`, and the boot partitions are copied with `dd` in it. |
+| Root | Works | Magisk 27. The phone runs with the system as its root (`/dev/root`), so the boot image must be patched with `LEGACYSAR=true` (it changes `skip_initramfs` to `want_initramfs` in the kernel). Without that Magisk does not start. Flash the patched image to the active slot (`fastboot flash boot_b ...`). |
+| `su` from adb | Works | In the Magisk app set Superuser access to Apps and ADB, and switch on Shell in the Superuser list (the first request that times out stores a deny). |
+| Picker and apps | Works | The display is `mdssfb`, 720 by 1520. The picker is drawn right. |
+| Boot straight into FB Tools | Works | The Magisk `service.d` script, written by Phone Files. |
+
+The steps and the stock boot images of this phone are in `research/g7power/` on the Mac that rooted it (not in this repository).
 
 ## Moto Z2 Force (Android 8.0)
 
