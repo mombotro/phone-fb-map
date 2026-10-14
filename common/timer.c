@@ -80,7 +80,11 @@ static void alarm_helper_start(void) {
         int nul = open("/dev/null", O_RDWR); if (nul >= 0) { dup2(nul, 1); dup2(nul, 2); }
         if (!getenv("ANDROID_ROOT")) setenv("ANDROID_ROOT", "/system", 1);
         if (!getenv("ANDROID_DATA")) setenv("ANDROID_DATA", "/data", 1);
-        execl("/system/bin/app_process", "app_process", "-Djava.class.path=" HELPER_JAR, "/system/bin", "Helper", (char *)NULL);
+        const char *ap = "/system/bin/app_process";
+        if (access("/system/bin/app_process64", X_OK) == 0 && access("/system/lib64", F_OK) == 0) {
+            ap = "/system/bin/app_process64"; setenv("LD_LIBRARY_PATH", "/system/lib64", 1);
+        }
+        execl(ap, "app_process", "-Djava.class.path=" HELPER_JAR, "/system/bin", "Helper", (char *)NULL);
         _exit(127);
     }
     close(to[0]); g_hin = to[1];

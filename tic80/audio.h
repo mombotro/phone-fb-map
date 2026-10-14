@@ -110,7 +110,11 @@ static int snd_init(int rate) {
         if (!getenv("ANDROID_DATA")) setenv("ANDROID_DATA", "/data", 1);
         if (!getenv("LD_LIBRARY_PATH")) setenv("LD_LIBRARY_PATH", "/system/lib", 1);
         char r[16], v[16]; snprintf(r, sizeof r, "%d", rate); snprintf(v, sizeof v, "%d", plat_volume_get());
-        execl("/system/bin/app_process", "app_process", "-Djava.class.path=" SND_JAR, "/system/bin", "Pcm", r, v, (char *)NULL);
+        const char *ap = "/system/bin/app_process";
+        if (access("/system/bin/app_process64", X_OK) == 0 && access("/system/lib64", F_OK) == 0) {
+            ap = "/system/bin/app_process64"; setenv("LD_LIBRARY_PATH", "/system/lib64", 1);
+        }
+        execl(ap, "app_process", "-Djava.class.path=" SND_JAR, "/system/bin", "Pcm", r, v, (char *)NULL);
         _exit(127);
     }
     close(to[0]); close(from[1]);

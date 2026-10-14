@@ -1,7 +1,7 @@
 // Shim.java - lets AudioTrack and MediaPlayer work while the Android framework is stopped, on Android 8 and newer.
 // Since Android 8 these classes register every player with two services that live in system_server (appops and audio), and they crash
 // with a NullPointerException when those services are missing, which is the case while FB Tools has the framework stopped. This
-// registers two stand-in services that answer every call with "no error, 0 (allowed)". The sound itself still goes through audioserver.
+// registers stand-in services (appops, audio, activity, sensor_privacy and permission, which a restarted audioserver waits for) that answer every call with "no error, 0 (allowed)". The sound itself still goes through audioserver.
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
@@ -38,7 +38,7 @@ public class Shim {
             Class<?> sm = Class.forName("android.os.ServiceManager");
             Method get = sm.getMethod("getService", String.class);
             Method add = sm.getMethod("addService", String.class, IBinder.class);
-            String[] names = { "appops", "audio" };
+            String[] names = { "appops", "audio", "activity", "sensor_privacy", "permission" };
             for (int i = 0; i < names.length; i++)
                 if (get.invoke(null, names[i]) == null) add.invoke(null, names[i], new Fake());
         } catch (Throwable t) {

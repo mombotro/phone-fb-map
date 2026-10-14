@@ -671,12 +671,14 @@ PLAT_FN int plat_touch_init(const PlatInfo *pi) {
         char name[64] = "?"; ioctl(fd, EVIOCGNAME(sizeof name), name);
         int mt = plat__bit(abs, ABS_MT_POSITION_X) && plat__bit(abs, ABS_MT_POSITION_Y);
         int st = plat__bit(abs, ABS_X) && plat__bit(abs, ABS_Y) && plat__bit(key, BTN_TOUCH);
-        if (plat__bit(key, KEY_POWER) && plat__npwr < 4) {                  // a device with a power key: read it too
-            int d = dup(fd);
+        // (not the touchscreen itself: the Moto G7 Power's touch device also says it has a power key. And each reader opens the device again, because a dup()ed
+        // handle shares the event queue, so reading the power key would take the touches away.)
+        if (plat__bit(key, KEY_POWER) && plat__npwr < 4 && !mt && !st) {          // a device with a power key: read it too
+            int d = open(path, O_RDONLY | O_NONBLOCK);
             if (d >= 0) { plat__pwr_fd[plat__npwr++] = d; fprintf(stderr, "power key: %s (%s)\n", path, name); }
         }
-        if (plat__bit(key, KEY_VOLUMEUP) && plat__bit(key, KEY_VOLUMEDOWN) && plat__nvol < 4) {
-            int d = dup(fd);
+        if (plat__bit(key, KEY_VOLUMEUP) && plat__bit(key, KEY_VOLUMEDOWN) && plat__nvol < 4 && !mt && !st) {
+            int d = open(path, O_RDONLY | O_NONBLOCK);
             if (d >= 0) { plat__vol_fd[plat__nvol++] = d; fprintf(stderr, "volume keys: %s (%s)\n", path, name); }
         }
         if ((!mt && !st) || plat__tfd >= 0) { close(fd); continue; }       // not a touchscreen, or we already have one
